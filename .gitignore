@@ -1,0 +1,22 @@
+# environments and vendored test deps
+.venv/
+.pytest_vendor/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+# data, weights, outputs: never commit
+data/
+outputs/
+runs/
+results/
+*.npz
+*.npy
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+.DS_Store

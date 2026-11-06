@@ -1,0 +1,11 @@
+weightprog
+Copyright 2026 Ozgun Genc
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Parts of this library were adapted from research code written for the Kaggle competition
+"gemma-4-developer-agent" (weight-editing study, November 2026) by the same author.
+
+Gemma is a trademark of Google LLC. This repository contains no Gemma model weights, no edits derived
+from Gemma weights, and no third-party task data. Use of Gemma models is governed by the Gemma terms of use;
+weight edits and adapters you create from a Gemma model are model derivatives under those terms.

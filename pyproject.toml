@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weightprog"
+version = "0.1.0"
+description = "Gradient-free weight programming of Gemma 4 by frontier-model proposers, with a pre-registered verification gate (MLX and PyTorch backends)."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [{ name = "Ozgun Genc" }]
+keywords = ["gemma", "interpretability", "model-editing", "mlx", "pytorch", "llm-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.24", "tokenizers>=0.20"]
+
+[project.optional-dependencies]
+mlx = ["mlx>=0.30", "mlx-lm>=0.30"]
+torch = ["torch>=2.4", "transformers>=5.5", "safetensors>=0.4"]
+peft = ["peft>=0.15"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+weightprog = "weightprog.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+weightprog = ["gate/*.md", "proposer/*.md", "proposer/sandbox/*.sh", "proposer/sandbox/*.sb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "mlx: needs the mlx extra",
+    "torch: needs the torch extra",
+    "regression: reads experiment outputs given by an environment variable",
+]
