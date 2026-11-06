@@ -110,6 +110,12 @@ class SafetensorsReader:
             return a.astype(np.float32)
         return a.copy()
 
+    def rows(self, name: str, idx) -> np.ndarray:
+        """Selected rows of a 2-D tensor as float32, without widening the whole tensor (e.g. unembedding rows)."""
+        f = self._where[name]
+        a = f.raw(name)[np.asarray(idx)]
+        return bf16_bits_to_f32(a) if f.header[name]["dtype"] == "BF16" else a.astype(np.float32)
+
     def close(self) -> None:
         for f in self._files:
             f.close()

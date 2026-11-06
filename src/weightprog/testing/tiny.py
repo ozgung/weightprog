@@ -108,7 +108,7 @@ def tiny_weights(text_cfg: dict, seed: int = 0, scale: float = 1.0) -> dict[str,
             w[L + "per_layer_input_gate.weight"] = lin(P, H)
             w[L + "per_layer_projection.weight"] = lin(H, P)
             w[L + "post_per_layer_input_norm.weight"] = norm(H)
-        w[L + "layer_scalar"] = np.array([rng.uniform(0.4, 1.0)], dtype=np.float32)
+        w[L + "layer_scalar"] = np.array([0.48 if i == n - 1 else rng.uniform(0.4, 1.0)], dtype=np.float32)  # E4B L41: 0.48
     return w
 
 
