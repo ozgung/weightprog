@@ -54,7 +54,7 @@ def test_registered_report_reproduced_exactly(study):
     base = load_arm(g, "base", keys, False, study["metrics"])
     arms = {c: load_arm(g, c, keys, True, study["metrics"]) for c in cands}
     ctrls = {c: {x: load_arm(g, f"{c}_{x}", keys, True, study["metrics"]) for x in ("rand1", "rand2")} for c in cands}
-    rep = analyze(base, arms, ctrls, keys, study["cluster_of"], GateSpec(holm_m=expected["holm_m"]))
+    rep = analyze(base, arms, ctrls, keys, study["cluster_of"], GateSpec.round2(holm_m=expected["holm_m"]))
     assert json.loads(json.dumps(rep)) == expected  # exact, floats included
 
 

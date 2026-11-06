@@ -68,13 +68,18 @@ class GateSpec:
     draws: tuple[int, ...] = (0, 1)
     bootstrap_n: int = 10000
     bootstrap_seed: int = 20261104
-    sources: dict[str, str] = field(default_factory=lambda: {"OOD-43": "o43", "OOD-B": "oodb"})  # name -> key prefix
+    sources: dict[str, str] = field(default_factory=dict)  # reported breakdown: name -> call-key prefix
     # report key names (defaults give the round-2 report's layout)
     primary_name: str = "escape_artefact"
     primary_short: str = "artefact"
     secondary_name: str = "acceptance"
     noninferiority_name: str = "acceptance"
     preservation_name: str = "served_ok"
+
+    @classmethod
+    def round2(cls, holm_m: int = 2) -> "GateSpec":
+        """The study's registered round-2 rule (doc Thread 2026-11-04 17:1x), including its two reported sources."""
+        return cls(holm_m=holm_m, sources={"OOD-43": "o43", "OOD-B": "oodb"})
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -144,7 +149,7 @@ def analyze(base: Arm, candidates: Mapping[str, Arm], controls: Mapping[str, Map
     pm, sm = s.primary_metric, s.secondary_metric
     rep = {"n_calls_x_draws": len(keys), "n_tasks": len({unit_of(k[0]) for k in keys}), "holm_m": max(s.holm_m, len(cands)),
            f"base_{pm}s": sum(base[k][pm] for k in keys), "candidates": {}}
-    srcs = {name: [k for k in keys if k[0].startswith(prefix)] for name, prefix in s.sources.items()}
+    srcs = {name: ks for name, prefix in s.sources.items() for ks in [[k for k in keys if k[0].startswith(prefix)]] if ks}
     for c in cands:
         e = candidates[c]
         ref = {"base": base, **{x: controls[c][x] for x in s.controls}}
