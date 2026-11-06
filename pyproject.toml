@@ -33,7 +33,7 @@ weightprog = "weightprog.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-weightprog = ["gate/*.md", "proposer/*.md", "proposer/sandbox/*.sh", "proposer/sandbox/*.sb"]
+weightprog = ["gate/*.md", "proposer/*.md", "proposer/sandbox/*.sh", "proposer/sandbox/*.sb", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

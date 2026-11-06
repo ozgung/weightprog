@@ -1,0 +1,42 @@
+(version 1)
+;; macOS Seatbelt profile for a weight-editing proposer run as headless Codex CLI (sandbox-exec; macOS only).
+;; Parameters (sandbox-exec -D): HOME PACKET RUN MODEL VENV PYHOME TMPD
+;; Codex's own sandbox is switched off by the launcher (macOS cannot nest Seatbelt profiles); this profile is the
+;; boundary. CODEX_HOME is an isolated directory inside TMPD holding a minimal config and a symlink to auth.json.
+(allow default)
+
+;; ---- reads -------------------------------------------------------------------------------------------------------
+(deny file-read-data (subpath (param "HOME")))
+(deny file-read-data (subpath "/private/tmp"))
+(deny file-read-data (subpath "/Users/Shared"))
+(deny file-read-data (subpath "/Volumes"))
+
+;; Codex: binary outside HOME (Homebrew), only the user's auth.json from ~/.codex
+(allow file-read-data (literal (string-append (param "HOME") "/.codex/auth.json")))
+(allow file-read-data (subpath (string-append (param "HOME") "/Library/Preferences")))
+
+;; Python for the weight kernel
+(allow file-read-data (subpath (param "PYHOME")))
+(allow file-read-data (subpath (param "VENV")))
+
+;; the proposer's material
+(allow file-read-data (subpath (param "PACKET")))
+(allow file-read-data (subpath (param "RUN")))
+(allow file-read-data (subpath (param "MODEL")))
+(allow file-read-data (subpath (param "TMPD")))
+
+;; ---- writes ------------------------------------------------------------------------------------------------------
+(deny file-write* (subpath (param "HOME")))
+(deny file-write* (subpath "/private/tmp"))
+(allow file-write* (subpath (param "RUN")))
+(allow file-write* (subpath (string-append (param "PACKET") "/scratch")))
+(allow file-write* (subpath (param "TMPD")))
+(allow file-write* (literal (string-append (param "HOME") "/.codex/auth.json")))
+(allow file-write* (regex (string-append "^" (param "HOME") "/\\.codex/auth\\.json\\..*")))
+(allow file-write* (subpath (string-append (param "HOME") "/Library/Caches")))
+
+;; ---- no talking to other local agent sessions (Claude sockets; Codex app-server sockets under ~/.codex) ---------
+(deny network-outbound (remote unix-socket (path-regex #"^/private/tmp/cc-socks/")))
+(deny network-outbound (remote unix-socket (path-regex #"^/tmp/cc-socks/")))
+(deny network-outbound (remote unix-socket (path-regex #"^/Users/[^/]+/\.claude/")))
+(deny network-outbound (remote unix-socket (path-regex #"^/Users/[^/]+/\.codex/")))

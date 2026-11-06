@@ -1,0 +1,73 @@
+(version 1)
+;; macOS Seatbelt profile for a weight-editing proposer run as headless Claude Code (sandbox-exec; macOS only).
+;; Parameters (sandbox-exec -D): HOME PACKET RUN MODEL VENV PYHOME TMPD SLUG
+;; Policy: allow by default, deny reading the user's home and shared temp, then re-allow only what the proposer and
+;; Claude Code need. Later rules win. Writes are denied everywhere except the run folder, the packet's scratch/,
+;; the run's temp dir and Claude Code's own state for this working directory.
+;; Known holes (by design or Seatbelt limits): file-read-metadata is allowed everywhere (stat of a guessed path
+;; reveals existence and size); ~/.claude.json and ~/.claude config are readable; outbound TCP is open (the API
+;; needs it), so the transcript audit must check for network use; the keychain is readable at the file level.
+(allow default)
+
+;; ---- reads -------------------------------------------------------------------------------------------------------
+(deny file-read-data (subpath (param "HOME")))
+(deny file-read-data (subpath "/private/tmp"))
+(deny file-read-data (subpath "/Users/Shared"))
+(deny file-read-data (subpath "/Volumes"))
+
+;; Claude Code binary, its config and credentials access
+(allow file-read-data (subpath (string-append (param "HOME") "/.local/share/claude")))
+(allow file-read-data (literal (string-append (param "HOME") "/.local/bin/claude")))
+(allow file-read-data (literal (string-append (param "HOME") "/.claude.json")))
+(allow file-read-data (regex (string-append "^" (param "HOME") "/\\.claude\\.json\\..*")))
+(allow file-read-data (subpath (string-append (param "HOME") "/Library/Keychains")))
+(allow file-read-data (subpath (string-append (param "HOME") "/Library/Preferences")))
+(allow file-read-data (subpath (string-append (param "HOME") "/.claude")))
+;; ...but not other sessions' transcripts, prompts, memories, file snapshots or tasks
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/projects")))
+(allow file-read-data (subpath (string-append (param "HOME") "/.claude/projects/" (param "SLUG"))))
+(deny file-read-data (literal (string-append (param "HOME") "/.claude/history.jsonl")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/file-history")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/paste-cache")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/jobs")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/backups")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/daemon")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/debug")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/feedback")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/telemetry")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/sessions")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/session-env")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/shell-snapshots")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/todos")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/ide")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/bridge-spawn")))
+(deny file-read-data (subpath (string-append (param "HOME") "/.claude/state")))
+
+;; Python for the weight kernel: the environment and its base interpreter
+(allow file-read-data (subpath (param "PYHOME")))
+(allow file-read-data (subpath (param "VENV")))
+
+;; the proposer's material: packet (read), run folder (read/write), model directory (read)
+(allow file-read-data (subpath (param "PACKET")))
+(allow file-read-data (subpath (param "RUN")))
+(allow file-read-data (subpath (param "MODEL")))
+(allow file-read-data (subpath (param "TMPD")))
+
+;; ---- writes ------------------------------------------------------------------------------------------------------
+(deny file-write* (subpath (param "HOME")))
+(deny file-write* (subpath "/private/tmp"))
+(allow file-write* (subpath (param "RUN")))
+(allow file-write* (subpath (string-append (param "PACKET") "/scratch")))
+(allow file-write* (subpath (param "TMPD")))
+(allow file-write* (subpath (string-append (param "HOME") "/.claude")))
+(deny file-write* (subpath (string-append (param "HOME") "/.claude/projects")))
+(allow file-write* (subpath (string-append (param "HOME") "/.claude/projects/" (param "SLUG"))))
+(deny file-write* (literal (string-append (param "HOME") "/.claude/settings.json")))
+(allow file-write* (regex (string-append "^" (param "HOME") "/\\.claude\\.json.*")))
+(allow file-write* (subpath (string-append (param "HOME") "/Library/Keychains")))
+(allow file-write* (subpath (string-append (param "HOME") "/Library/Caches")))
+
+;; ---- no talking to other local agent sessions --------------------------------------------------------------------
+(deny network-outbound (remote unix-socket (path-regex #"^/private/tmp/cc-socks/")))
+(deny network-outbound (remote unix-socket (path-regex #"^/tmp/cc-socks/")))
+(deny network-outbound (remote unix-socket (path-regex #"^/Users/[^/]+/\.claude/")))
