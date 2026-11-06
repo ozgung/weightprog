@@ -158,3 +158,9 @@ def test_fullcall_amendment_flips_only_a_confounded_compile_failure():
     with pytest.raises(GateBlocked):
         amend(reg, fc_base, {"other": fc_good}, keys)
     assert math.isclose(out["holm_m"], 2)
+
+
+def test_gatespec_json_roundtrip():
+    s = GateSpec.round2(holm_m=3)
+    back = GateSpec.from_json(json.loads(json.dumps(s.to_json())))
+    assert back == s and back.sources == {"OOD-43": "o43", "OOD-B": "oodb"} and back.controls == ("rand1", "rand2")

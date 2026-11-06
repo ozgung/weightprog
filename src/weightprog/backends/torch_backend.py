@@ -87,7 +87,7 @@ class TorchBackend(BackendBase):
     def weight_names(self) -> list[str]:
         out = []
         for k in self.params:
-            if k.startswith(self._pre) and not k.endswith(("_inv_freq",)) and ".rotary_emb." not in k and k != "lm_head.weight":
+            if k.startswith(self._pre) and not k.endswith(("_inv_freq", "embed_scale")) and ".rotary_emb." not in k:
                 out.append("model.language_model." + k.removeprefix(self._pre))
         return sorted(set(out))
 

@@ -61,3 +61,7 @@ def test_bf16_loads_in_both(tiny_dir_bf16, sample_ids):
     pa, pb = np.exp(a.logprobs(sample_ids, pos)), np.exp(b.logprobs(sample_ids, pos))
     assert np.abs(pa - pb).max() < 0.05
     np.testing.assert_array_equal(a.read_weight(module_name(0, "q_proj")), b.read_weight(module_name(0, "q_proj")))
+
+
+def test_weight_names_agree(mlx_be, torch_be):
+    assert mlx_be.weight_names() == torch_be.weight_names()

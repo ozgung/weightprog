@@ -15,7 +15,7 @@ import json
 import random
 from pathlib import Path
 
-from ..replay.codec import Q, call_prefix
+from ..replay.codec import call_prefix
 
 FUNCS = ["def add(a, b):\n    return a + b\n", "def neg(x):\n    return -x\n", "def greet(n):\n    print(\"hi\", n)\n",
          "class Box:\n    def __init__(self, v):\n        self.v = v\n", "def first(xs):\n    return xs[0]\n",
@@ -64,5 +64,3 @@ def write_call_set(out_dir: str | Path, calls: list[dict], files: dict[str, str]
     (out / "usable_keys.txt").write_text("\n".join(c["key"] for c in calls) + "\n")
     return out
 
-
-assert Q  # the delimiter is part of every prefix built here
