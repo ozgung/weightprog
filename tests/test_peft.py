@@ -21,6 +21,7 @@ def test_peft_adapter_equals_delta(tiny_dir, tmp_path, torch_be, sample_ids):
     ad = export_peft(es, tmp_path / "adapter", base_model=str(tiny_dir))
     cfg = json.loads((ad / "adapter_config.json").read_text())
     assert cfg["r"] == 3 and cfg["lora_alpha"] == 3 and len(cfg["rank_pattern"]) == 2
+    assert cfg["task_type"] == "CAUSAL_LM"  # the competition's adapter format and the study's adapter verifier
 
     base = Gemma4ForConditionalGeneration.from_pretrained(tiny_dir, dtype=torch.float32, attn_implementation="eager").eval()
     W0 = {e.module: dict(base.named_parameters())[e.module].detach().clone().numpy() for e in es}

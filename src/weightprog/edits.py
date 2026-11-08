@@ -238,14 +238,15 @@ class WeightSource:
 # ---- PEFT export ---------------------------------------------------------------------------------------------
 
 def export_peft(edits: EditSet, out_dir: str | Path, base_model: str = "", module_prefix: str = "model.language_model.",
-                peft_prefix: str = "base_model.model.", dtype: str = "F32") -> Path:
+                peft_prefix: str = "base_model.model.", dtype: str = "F32", task_type: str | None = "CAUSAL_LM") -> Path:
     """Write a PEFT LoRA adapter whose delta equals B @ A exactly.
 
     PEFT computes delta = lora_B @ lora_A * (lora_alpha / r). We store lora_A = A, lora_B = B and set
     lora_alpha = r per module (rank_pattern / alpha_pattern when ranks differ), so the scaling is exactly 1.
     Module paths are those of the Hugging Face Gemma4ForConditionalGeneration (`model.language_model.layers...`);
     pass module_prefix="model." for a text-only Gemma4ForCausalLM checkpoint. Tensors are written in float32 by
-    default (dtype="BF16" halves the size but rounds B and A, so the delta is no longer exact).
+    default (dtype="BF16" halves the size but rounds B and A, so the delta is no longer exact). task_type defaults to
+    CAUSAL_LM, the value the competition's adapter format and vLLM-served adapters carry.
     """
     from .io.safetensors_np import save_file
 
@@ -263,7 +264,7 @@ def export_peft(edits: EditSet, out_dir: str | Path, base_model: str = "", modul
     r0 = max(ranks.values())
     rank_pattern = {re.escape(p): r for p, r in ranks.items() if r != r0}
     cfg = {
-        "peft_type": "LORA", "task_type": None, "base_model_name_or_path": base_model, "r": r0, "lora_alpha": r0,
+        "peft_type": "LORA", "task_type": task_type, "base_model_name_or_path": base_model, "r": r0, "lora_alpha": r0,
         "rank_pattern": rank_pattern, "alpha_pattern": dict(rank_pattern), "target_modules": sorted(targets),
         "lora_dropout": 0.0, "bias": "none", "fan_in_fan_out": False, "use_rslora": False, "use_dora": False,
         "init_lora_weights": True, "inference_mode": True, "modules_to_save": None, "layers_to_transform": None,
