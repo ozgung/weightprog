@@ -84,6 +84,11 @@ class TorchBackend(BackendBase):
     def read_weight(self, name: str) -> np.ndarray:
         return self._param(name).detach().float().cpu().numpy().copy()  # never a view of the live parameter
 
+    def read_rows(self, name: str, rows) -> np.ndarray:
+        """float32 copy of some rows of a parameter (e.g. unembedding rows) without copying the whole tensor."""
+        idx = self.torch.as_tensor(np.asarray(rows, dtype=np.int64), device=self._param(name).device)
+        return self._param(name).detach()[idx].float().cpu().numpy().copy()
+
     def weight_names(self) -> list[str]:
         out = []
         for k in self.params:
@@ -233,7 +238,7 @@ class TorchBackend(BackendBase):
                                                        attn_mask=allowed[None, None], scale=scale))
         return torch.cat(outs, dim=2)
 
-    def capture(self, ids, positions, layers=(), what=("resid",), attn_layers=()) -> dict:
+    def capture(self, ids, positions, layers=(), what=("resid",), attn_layers=(), patch_resid=None) -> dict:
         torch = self.torch
         from transformers.models.gemma4.modeling_gemma4 import apply_rotary_pos_emb
 
@@ -314,6 +319,10 @@ class TorchBackend(BackendBase):
                     g = layer.act_fn(layer.per_layer_input_gate(h)) * pli
                     h = h + layer.post_per_layer_input_norm(layer.per_layer_projection(g))
                 h = h * layer.layer_scalar
+                if patch_resid and i in patch_resid:  # activation patching: overwrite the residual after layer i
+                    h = h.clone()
+                    for p_, v in patch_resid[i].items():
+                        h[0, int(p_)] = torch.as_tensor(np.asarray(v), dtype=h.dtype, device=h.device)
                 if want and "resid" in what:
                     keep["resid"].append(f32(h[0, pos]))
             out = {"positions": np.array(pos_l), "layers": np.array(layers, dtype=np.int64),

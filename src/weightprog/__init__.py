@@ -1,3 +1,3 @@
-"""weightprog: gradient-free weight programming of Gemma 4, with a pre-registered verification gate."""
+"""weightprog: closed-form weight edits of Gemma 4 for coding agents (instruments, constructions, evaluation)."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -13,4 +13,4 @@ def test_quickstart(tmp_path, monkeypatch):
     code = code.replace('"/tmp/tiny_g4"', repr(str(tmp_path / "tiny")))
     ns = {}
     exec(compile(code, "README-quickstart", "exec"), ns)  # noqa: S102
-    assert abs(ns["pred"] - (ns["new"] - ns["base"])).max() < 1e-3
+    assert {r["arm"] for r in ns["rows"]} == {"base", "edit", "rand1"}

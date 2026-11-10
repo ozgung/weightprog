@@ -1,6 +1,8 @@
 # Real-model validation
 
-Everything in `tests/` runs on tiny random Gemma 4 checkpoints. The checks below need the real Gemma 4 E4B. They were
+Everything in `tests/` runs on tiny random Gemma 4 checkpoints. The checks below need the real Gemma 4 E4B and the
+study's recorded calls; their scripts live with the study's experiment kit (`weightprog_study/scripts/` in the
+project repository), because they replay `edit_file` calls. They validate this library's backends. They were
 run once for this release (2026-11-07; results at the end) and all five passed. Run them again before using a backend
 for a comparison that matters, after any mlx, mlx-lm, torch or transformers upgrade, and record the outputs next to the
 study they serve.
@@ -12,7 +14,7 @@ about 18 GB (the study's port peaked at 17.4 GB on an L4).
 ## 1. MLX backend vs the study server's cached base generations
 
 ```bash
-python scripts/validate_mlx_vs_cache.py \
+python weightprog_study/scripts/validate_mlx_vs_cache.py \
   --model-dir .../gemma-4-e4b-it-qat-q4_0-unquantized \
   --calls     .../outputs/weight_edit/shared/search_r2/calls.jsonl \
   --cache     .../outputs/weight_edit/wsp_cache/base_gen.jsonl \
@@ -29,9 +31,9 @@ can change kernels; record the versions.
 ## 2. PyTorch backend vs MLX backend
 
 ```bash
-python scripts/validate_torch_vs_mlx.py run --backend mlx   --model-dir M --calls C --keys K --n 40 --out mlx.jsonl
-python scripts/validate_torch_vs_mlx.py run --backend torch --model-dir M --calls C --keys K --n 40 --out torch.jsonl --device cuda
-python scripts/validate_torch_vs_mlx.py compare mlx.jsonl torch.jsonl
+python weightprog_study/scripts/validate_torch_vs_mlx.py run --backend mlx   --model-dir M --calls C --keys K --n 40 --out mlx.jsonl
+python weightprog_study/scripts/validate_torch_vs_mlx.py run --backend torch --model-dir M --calls C --keys K --n 40 --out torch.jsonl --device cuda
+python weightprog_study/scripts/validate_torch_vs_mlx.py compare mlx.jsonl torch.jsonl
 ```
 
 Pass: greedy frozen-prefix text identical in at least ~95 % of calls, outcomes identical after scoring, native
@@ -45,7 +47,7 @@ and run step 2's torch half there; compare with an MLX file produced on a Mac.
 ## 3. Closed-form tail prediction on E4B
 
 ```bash
-python scripts/validate_tail_prediction.py --backend mlx --model-dir M --calls C --edit RUN_OR_EDIT_DIR --n 8 --out tail.json
+python weightprog_study/scripts/validate_tail_prediction.py --backend mlx --model-dir M --calls C --edit RUN_OR_EDIT_DIR --n 8 --out tail.json
 ```
 
 Needs any edit on `layers.41.mlp.down_proj` (for example a proposer's frozen edit). Pass: the exact tail prediction
@@ -87,17 +89,15 @@ edit (layer 41 `down_proj`, rank 2).
 | 2. Torch vs MLX (40 calls) | greedy text identical 40/40; full-call 39/40; log-probs of the recorded `old_string` median 0.000, max 0.48 nats | (same comparison) | pass; the max is one token at log-prob −3.8 against −3.3, and the next largest is 0.10 |
 | 3. Tail prediction (8 calls) | exact error median 0.12, max 0.14 logit; linear correlation median 0.96 (min 0.92); measured shifts up to 13.8 | exact error median 0.12, max 0.16; correlation median 0.96 (min 0.92); shifts up to 13.9 | pass, against the corrected expectation above; on the 13.8 shift the linear prediction was off by 11.4 |
 | 4. Capture vs native (3 longest prompts given to each run: MLX 17.8k-19.9k tokens, torch 15.8k-17.5k) | target tokens max 3.7e-4 nats; top-1 83/83; whole vocabulary row max 0.60 | target tokens max 1.1e-4; top-1 124/124; row max 0.86 | pass: differences sit in the deep tail of the row, as the study's server saw |
-| 5. Gate reproduction | 5 tests passed | n/a | pass |
+| 5. Gate reproduction (now in `weightprog_study`) | 5 tests passed | n/a | pass |
 
 The raw outputs of these runs stay with the study; they contain competition task text and are not in this repository.
 
 ## What is untested on the real model
 
 - MPS (torch on Apple GPUs): tested on CPU only.
-- Generation with an edit applied, on either backend: check 3 applies an edit through `capture` only, and checks 1-2
-  generate without an edit. (The study's own MLX server did generate with edits; that is not this code.)
-- The budget server end to end with a real model and a real proposer: tested with the tiny model and synthetic
-  calls (queue order, budget, refusals, pinning, base cache, full-call option, read arrays).
-- The sandbox launchers and Seatbelt profiles: shell syntax checked, not launched in this repository (they are
-  generalised from the study's launchers, which ran three proposers).
-- PEFT export loaded into vLLM: tested with PEFT merge on the tiny HF model only.
+- Generation with an edit applied on the torch backend (MLX: see the worked example in `docs/recipes/`, run on E4B).
+- `evaluate.side_effects`, `construct.kv_update` / `second_moment` and the probe helpers: tested on tiny models only,
+  except where a worked example says otherwise.
+- PEFT export loaded into vLLM: tested with PEFT merge on the tiny HF model only (the study served its exported
+  adapters with vLLM on Kaggle, through the same `export_peft`).

@@ -93,7 +93,7 @@ def test_validation(spec, weights):
 def test_editset_container(spec, weights):
     es = EditSet([rand_edit(spec), rand_edit(spec, module_name(1, "q_proj"), r=3, seed=2)])
     assert es.modules() == [module_name(1, "q_proj"), DOWN5]  # file-name order
-    es.add(rand_edit(spec, seed=5))  # replaces
+    es.add(rand_edit(spec, seed=5), replace=True)  # replaces
     assert len(es) == 2
     half = es.scaled(0.5)
     np.testing.assert_allclose(half[DOWN5].delta(), 0.5 * es[DOWN5].delta(), rtol=1e-6)

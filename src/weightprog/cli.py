@@ -1,66 +1,130 @@
 """`weightprog` command line.
 
-    weightprog tiny OUT                               write a tiny random Gemma 4 checkpoint (tests, quickstart)
-    weightprog init-run --config server.json RUN --proposer P --model M --effort E --budget N [--fullcall]
-    weightprog serve --config server.json [--once]    forward-pass budget server (file queue)
-    weightprog packet --out PACKET --brief brief.md --call-set DIR --model-dir M [--dossier D] [--prior DIR]
-    weightprog brief --set KEY=VALUE ... --out brief.md [--template T]
+    weightprog census --model-dir M --cases C.jsonl [--split tune] [--draws 2] [--out rows.jsonl]
+                                   how the unedited model behaves on your cases (per-case labels and rates)
+    weightprog eval --model-dir M --cases C.jsonl --edit EDIT [--controls 2] [--split holdout] [--side-effects]
+                    [--criteria crit.json] [--report report.json] [--rows rows.jsonl] [--base-rows base.jsonl]
+                                   base vs edit vs matched random controls: target, keep, side effects, verdict
+                                   (--controls 0 and no --side-effects: a quick look; the verdict is then INCOMPLETE)
+    weightprog side-effects --model-dir M --edit EDIT [--texts texts.json] [--controls 2]
+    weightprog render --model-dir M --cases C.jsonl [--id ID]   print the exact prompt text of cases
     weightprog validate-edit EDIT --model-dir M       check an edit directory (shapes, rank, finite, no rescale)
-    weightprog controls SRC OUT --seed S [--support-matched]
-    weightprog replay {frozen,fullcall} --backend mlx --model-dir M --calls C --keys K --out GEN [--edit E]
-    weightprog score {frozen,fullcall} GEN --calls C --files F [--replacer exact|swegemma]
-    weightprog gate --gate-dir G --keys K --calls C --files F [--m 2] [--spec S | --preset round2] [--report NAME] CAND ...
-    weightprog amend --gate-dir G --keys K --report NAME [--out NAME] CAND ...
+    weightprog controls SRC OUT --seed S              write a matched random control of an edit
     weightprog export-peft EDIT OUT [--base-model ID] [--text-only] [--bf16]
-    weightprog audit RUN --allow PATH ...
-    weightprog prereg | weightprog spec               print the pre-registration template / the server spec
+    weightprog tiny OUT                               write a tiny random Gemma 4 checkpoint (tests, dry runs)
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
 
 
-def _calls_light(path: str) -> dict:
-    out = {}
-    with open(path) as f:
-        for line in f:
-            r = json.loads(line)
-            out[r["key"]] = {k: r.get(k) for k in ("repo", "file_sha", "task", "instance_id")}
-    return out
+def _model(a):
+    from .evaluate import open_model
+    return open_model(a.model_dir, backend=a.backend, dtype=a.dtype, device=a.device)
 
 
-def cmd_tiny(a):
-    from .testing import write_tiny_model
-    print(write_tiny_model(a.out, seed=a.seed, dtype=a.dtype))
+def _cases(a):
+    from .target import check_splits, load_cases, select
+    cases = load_cases(a.cases)
+    leak = check_splits(cases)
+    if leak:
+        print(f"WARNING: groups in both tune and holdout: {leak[:10]}", file=sys.stderr)
+    cases = select(cases, split=a.split) if a.split else cases
+    if a.limit:
+        cases = cases[: a.limit]
+    if not cases:
+        raise SystemExit("no cases selected")
+    return cases
 
 
-def cmd_init_run(a):
-    from .proposer.server import ServerConfig, init_run
-    print(init_run(ServerConfig.load(a.config), a.run_id, a.proposer, a.model, a.effort, a.budget, a.fullcall))
+def _progress(a):
+    return (lambda m: print(m, file=sys.stderr, flush=True)) if a.verbose else None
 
 
-def cmd_serve(a):
-    from .proposer.server import Server, ServerConfig
-    Server(ServerConfig.load(a.config)).loop(once=a.once)
+def _arms(edit_dir, n_controls, seed):
+    from .controls import matched_control
+    from .edits import EditSet
+    e = EditSet.load(edit_dir)
+    arms = {"base": None, "edit": e}
+    for k in range(1, n_controls + 1):
+        arms[f"rand{k}"] = matched_control(e, seed=seed + k)
+    return arms
 
 
-def cmd_packet(a):
-    from .proposer.packet import build_packet
-    from .proposer.server import LIMITS
-    limits = json.loads(Path(a.limits).read_text()) if a.limits else LIMITS
-    print(build_packet(a.out, Path(a.brief).read_text(), a.call_set, a.model_dir, a.dossier, a.prior, limits))
+def cmd_census(a):
+    from .evaluate import case_scores, run, write_rows
+    be, cases = _model(a), _cases(a)
+    rows = run(be, cases, {"base": None}, draws=a.draws, model_dir=a.model_dir, progress=_progress(a))
+    if a.out:
+        write_rows(rows, a.out)
+    s = case_scores(rows, "base")
+    tot = collections.Counter()
+    for cid, v in s.items():
+        if v["mode"] == "judged":
+            print(f"{cid:28} {v['role']:6} {''.join(l[0] for l in v['labels'])}  {v['greedy'][:90]!r}")
+            for lab in v["labels"]:
+                tot[(v["role"], lab)] += 1
+        elif v["mode"] == "contrast":
+            print(f"{cid:28} {v['role']:6} margin {v['margin']:+.3f}")
+        else:
+            print(f"{cid:28} {v['role']:6} {v['greedy'][:90]!r}")
+    for role in ("target", "keep"):
+        n = sum(tot[(role, l)] for l in ("good", "bad", "other"))
+        if n:
+            print(f"{role}: " + "  ".join(f"{l} {tot[(role, l)] / n:.3f}" for l in ("bad", "good", "other")) + f"  ({n} generations)")
 
 
-def cmd_brief(a):
-    from .proposer.packet import brief_template, fill_brief
-    vals = dict(s.split("=", 1) for s in a.set)
-    tpl = Path(a.template).read_text() if a.template else brief_template()
-    Path(a.out).write_text(fill_brief(tpl, vals, allow_missing=a.allow_missing))
-    print(a.out)
+def cmd_eval(a):
+    from .evaluate import Criteria, compare, read_rows, reuse_rows, run, side_effects, write_rows
+    be, cases = _model(a), _cases(a)
+    arms = _arms(a.edit, a.controls, a.control_seed)
+    base_rows = []
+    if a.base_rows:  # reuse the unedited model's rows across iterations (only rows whose case did not change)
+        p = Path(a.base_rows)
+        cached = read_rows(p) if p.exists() else []
+        base_rows, todo = reuse_rows(cached, cases, "base", a.draws, model_dir=a.model_dir)
+        if todo:
+            base_rows += run(be, todo, {"base": None}, draws=a.draws, model_dir=a.model_dir, progress=_progress(a))
+            others = [r for r in cached if r["arm"] == "base" and r["id"] not in {c.id for c in cases}]
+            write_rows(others + base_rows, p)
+        print(f"base rows: {len(cases) - len(todo)} cases reused, {len(todo)} generated -> {p}", file=sys.stderr)
+        arms.pop("base")
+    rows = base_rows + run(be, cases, arms, draws=a.draws, model_dir=a.model_dir, progress=_progress(a))
+    if a.rows:
+        write_rows(rows, a.rows)
+    side = None
+    if a.side_effects:
+        texts = json.loads(Path(a.texts).read_text())["texts"] if a.texts else None
+        side = side_effects(be, arms, texts)
+    crit = Criteria(**json.loads(Path(a.criteria).read_text())) if a.criteria else Criteria()
+    rep = compare(rows, side, arm="edit", controls=[k for k in arms if k.startswith("rand")], criteria=crit)
+    rep["edit_dir"] = str(a.edit)
+    rep["cases_file"] = str(a.cases)
+    rep["split"] = a.split
+    if a.report:
+        Path(a.report).write_text(json.dumps(rep, indent=1))
+    print("\n".join(rep["summary"]))
+
+
+def cmd_side_effects(a):
+    from .evaluate import side_effects
+    be = _model(a)
+    texts = json.loads(Path(a.texts).read_text())["texts"] if a.texts else None
+    out = side_effects(be, _arms(a.edit, a.controls, a.control_seed), texts)
+    print(json.dumps(out, indent=1))
+
+
+def cmd_render(a):
+    from .target import load_cases
+    for c in load_cases(a.cases):
+        if a.id and c.id != a.id:
+            continue
+        print(f"===== {c.id}\n{c.text(a.model_dir)}")
 
 
 def cmd_validate(a):
@@ -77,121 +141,51 @@ def cmd_controls(a):
     print(json.dumps(write_control(a.src, a.out, a.seed, a.support_matched), indent=1))
 
 
-def cmd_replay(a):
-    from .backends import get_backend
-    from .edits import EditSet
-    from .replay import load_calls, read_keys, run_replay
-    be = get_backend(a.backend, a.model_dir, dtype=a.dtype, device=a.device)
-    calls = load_calls(a.calls, read_keys(a.keys) if a.keys else None)
-    if a.limit:
-        calls = calls[: a.limit]
-    es = EditSet.load(a.edit) if a.edit else None
-    rows = run_replay(be, calls, a.mode, a.draws, a.seed_policy, es, a.edit_label or (str(a.edit) if a.edit else None), a.out,
-                      progress=lambda i, n, c: print(f"[{i + 1}/{n}] {c['key']}", flush=True))
-    print(f"{len(rows)} rows -> {a.out}")
-
-
-def cmd_score(a):
-    from .replay import FileStore, load_calls, score_rows
-    from .scoring import EditScorer, ExactReplacer, SwegemmaReplacer
-    calls = {c["key"]: c for c in load_calls(a.calls, only_usable=False)}
-    rep = SwegemmaReplacer() if a.replacer == "swegemma" else ExactReplacer()
-    gens = [json.loads(l) for l in Path(a.gen).read_text().splitlines() if l.strip()]
-    rows = score_rows(gens, calls, EditScorer(rep, file_text=FileStore(a.files)), a.mode)
-    out = Path(a.out) if a.out else Path(a.gen).with_suffix(".scored.jsonl")
-    out.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    acc = sum(r["accepted"] for r in rows)
-    print(f"scored {len(rows)} -> {out}: accepted {acc / max(1, len(rows)):.3f}")
-
-
-def _gate_inputs(a):
-    from .gate import universe
-    from .replay.records import FileStore
-    from .scoring import escape_artefact
-    keys = universe(a.keys, tuple(range(a.draws)))
-    calls = _calls_light(a.calls)
-    store = FileStore(a.files)
-    metrics = {"escape_artefact": lambda g: escape_artefact(g["gen"], store({"file_sha": calls[g["key"]]["file_sha"]}))}
-    return keys, calls, metrics
-
-
-def cmd_gate(a):
-    from .gate import GateSpec, analyze, load_arm, verdict_lines, write_report
-    spec = GateSpec.from_json(json.loads(Path(a.spec).read_text())) if a.spec else (GateSpec.round2() if a.preset == "round2" else GateSpec())
-    if a.m:
-        spec.holm_m = a.m
-    keys, calls, metrics = _gate_inputs(a)
-    want = {k for k, _ in keys}
-    cluster_of = {k.split("|")[1] if "|" in k else k: calls[k]["repo"] for k in want}
-    g = Path(a.gate_dir)
-    base = load_arm(g, "base", keys, False, metrics)
-    cands = {c: load_arm(g, c, keys, True, metrics) for c in a.cands}
-    ctrls = {c: {x: load_arm(g, f"{c}_{x}", keys, True, metrics) for x in spec.controls} for c in a.cands}
-    rep = analyze(base, cands, ctrls, keys, cluster_of, spec)
-    out = write_report(rep, g / a.report)
-    print("\n".join(verdict_lines(rep, spec)))
-    print(f"report -> {out}")
-
-
-def cmd_amend(a):
-    from .gate import amend, universe
-    from .gate.io import read_jsonl_unique
-    g = Path(a.gate_dir)
-    reg = json.loads((g / a.report).read_text())
-    keys = universe(a.keys, tuple(range(a.draws)))
-    base = read_jsonl_unique(g / "fullcall" / "gen_base.scored.jsonl")
-    cands = {c: read_jsonl_unique(g / "fullcall" / f"gen_{c}.scored.jsonl") for c in a.cands}
-    out = amend(reg, base, cands, keys, registered_name=a.report, strict=not a.no_strict)
-    name = a.out or a.report.replace(".json", "_amended.json")
-    (g / name).write_text(json.dumps(out, indent=1))
-    for c, x in out["candidates"].items():
-        print(f"{c}: full-call compile guard {x['fullcall_compile_guard_pass']} -> AMENDED PRIMARY {x['amended_primary_pass']}, "
-              f"SECONDARY {x['amended_secondary_pass']}")
-    print(f"report -> {g / name}")
-
-
 def cmd_export_peft(a):
     from .edits import EditSet, export_peft
     print(export_peft(EditSet.load(a.edit), a.out, a.base_model or "", "model." if a.text_only else "model.language_model.",
                       dtype="BF16" if a.bf16 else "F32"))
 
 
-def cmd_audit(a):
-    from .proposer.audit import audit
-    rep = audit(a.run, a.allow)
-    print(json.dumps({"run": rep["run"], "tool_calls": rep["tool_calls"], "counts": rep["counts"]}))
+def cmd_tiny(a):
+    from .testing import write_tiny_model
+    print(write_tiny_model(a.out, seed=a.seed, dtype=a.dtype))
 
 
-def cmd_prereg(a):
-    from .gate import prereg_template
-    sys.stdout.write(prereg_template())
-
-
-def cmd_spec(a):
-    from .proposer.server import spec_text
-    sys.stdout.write(spec_text())
+def _model_args(s, cases=True):
+    s.add_argument("--model-dir", required=True)
+    s.add_argument("--backend", default="auto", choices=["auto", "mlx", "torch"])
+    s.add_argument("--dtype", default="bfloat16")
+    s.add_argument("--device")
+    s.add_argument("-v", "--verbose", action="store_true")
+    if cases:
+        s.add_argument("--cases", required=True)
+        s.add_argument("--split", help="only cases with this split label (e.g. tune or holdout)")
+        s.add_argument("--limit", type=int)
+        s.add_argument("--draws", type=int, default=2)
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="weightprog", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("tiny"); s.add_argument("out"); s.add_argument("--seed", type=int, default=0)
-    s.add_argument("--dtype", default="F32", choices=["F32", "BF16"]); s.set_defaults(fn=cmd_tiny)
+    s = sub.add_parser("census", help="run the unedited model on your cases"); _model_args(s)
+    s.add_argument("--out"); s.set_defaults(fn=cmd_census)
 
-    s = sub.add_parser("init-run"); s.add_argument("--config", required=True); s.add_argument("run_id")
-    s.add_argument("--proposer", required=True); s.add_argument("--model", required=True); s.add_argument("--effort", required=True)
-    s.add_argument("--budget", type=int, default=10); s.add_argument("--fullcall", action="store_true"); s.set_defaults(fn=cmd_init_run)
+    s = sub.add_parser("eval", help="judge an edit against base and matched random controls"); _model_args(s)
+    s.add_argument("--edit", required=True); s.add_argument("--controls", type=int, default=2)
+    s.add_argument("--control-seed", type=int, default=20261110); s.add_argument("--side-effects", action="store_true")
+    s.add_argument("--texts"); s.add_argument("--criteria"); s.add_argument("--report"); s.add_argument("--rows")
+    s.add_argument("--base-rows", help="cache of the unedited model's rows: reused when the case is unchanged, else regenerated and saved")
+    s.set_defaults(fn=cmd_eval)
 
-    s = sub.add_parser("serve"); s.add_argument("--config", required=True); s.add_argument("--once", action="store_true")
-    s.set_defaults(fn=cmd_serve)
+    s = sub.add_parser("side-effects", help="KL / NLL of an edit on reference text"); _model_args(s, cases=False)
+    s.add_argument("--edit", required=True); s.add_argument("--controls", type=int, default=0)
+    s.add_argument("--control-seed", type=int, default=20261110); s.add_argument("--texts")
+    s.set_defaults(fn=cmd_side_effects)
 
-    s = sub.add_parser("packet"); s.add_argument("--out", required=True); s.add_argument("--brief", required=True)
-    s.add_argument("--call-set", required=True); s.add_argument("--model-dir", required=True); s.add_argument("--dossier")
-    s.add_argument("--prior"); s.add_argument("--limits"); s.set_defaults(fn=cmd_packet)
-
-    s = sub.add_parser("brief"); s.add_argument("--set", action="append", default=[]); s.add_argument("--out", required=True)
-    s.add_argument("--template"); s.add_argument("--allow-missing", action="store_true"); s.set_defaults(fn=cmd_brief)
+    s = sub.add_parser("render", help="print the exact prompt text of cases"); s.add_argument("--cases", required=True)
+    s.add_argument("--model-dir"); s.add_argument("--id"); s.set_defaults(fn=cmd_render)
 
     s = sub.add_parser("validate-edit"); s.add_argument("edit"); s.add_argument("--model-dir", required=True)
     s.set_defaults(fn=cmd_validate)
@@ -199,38 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("controls"); s.add_argument("src"); s.add_argument("out"); s.add_argument("--seed", type=int, required=True)
     s.add_argument("--support-matched", action="store_true"); s.set_defaults(fn=cmd_controls)
 
-    s = sub.add_parser("replay"); s.add_argument("mode", choices=["frozen", "fullcall"])
-    s.add_argument("--backend", default="mlx", choices=["mlx", "torch"]); s.add_argument("--model-dir", required=True)
-    s.add_argument("--dtype", default="bfloat16"); s.add_argument("--device"); s.add_argument("--calls", required=True)
-    s.add_argument("--keys"); s.add_argument("--draws", type=int, default=2)
-    s.add_argument("--seed-policy", default="index", choices=["index", "key"]); s.add_argument("--edit")
-    s.add_argument("--edit-label"); s.add_argument("--limit", type=int); s.add_argument("--out", required=True)
-    s.set_defaults(fn=cmd_replay)
-
-    s = sub.add_parser("score"); s.add_argument("mode", choices=["frozen", "fullcall"]); s.add_argument("gen")
-    s.add_argument("--calls", required=True); s.add_argument("--files", required=True)
-    s.add_argument("--replacer", default="exact", choices=["exact", "swegemma"]); s.add_argument("--out")
-    s.set_defaults(fn=cmd_score)
-
-    s = sub.add_parser("gate"); s.add_argument("--gate-dir", required=True); s.add_argument("--keys", required=True)
-    s.add_argument("--calls", required=True); s.add_argument("--files", required=True); s.add_argument("--draws", type=int, default=2)
-    s.add_argument("--m", type=int); s.add_argument("--spec"); s.add_argument("--preset", choices=["round2"])
-    s.add_argument("--report", default="gate_report.json")
-    s.add_argument("cands", nargs="+"); s.set_defaults(fn=cmd_gate)
-
-    s = sub.add_parser("amend"); s.add_argument("--gate-dir", required=True); s.add_argument("--keys", required=True)
-    s.add_argument("--report", required=True); s.add_argument("--out"); s.add_argument("--draws", type=int, default=2)
-    s.add_argument("--no-strict", action="store_true"); s.add_argument("cands", nargs="+"); s.set_defaults(fn=cmd_amend)
-
     s = sub.add_parser("export-peft"); s.add_argument("edit"); s.add_argument("out"); s.add_argument("--base-model")
     s.add_argument("--text-only", action="store_true"); s.add_argument("--bf16", action="store_true")
     s.set_defaults(fn=cmd_export_peft)
 
-    s = sub.add_parser("audit"); s.add_argument("run"); s.add_argument("--allow", action="append", default=[])
-    s.set_defaults(fn=cmd_audit)
-
-    s = sub.add_parser("prereg"); s.set_defaults(fn=cmd_prereg)
-    s = sub.add_parser("spec"); s.set_defaults(fn=cmd_spec)
+    s = sub.add_parser("tiny"); s.add_argument("out"); s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--dtype", default="F32", choices=["F32", "BF16"]); s.set_defaults(fn=cmd_tiny)
     return ap
 
 

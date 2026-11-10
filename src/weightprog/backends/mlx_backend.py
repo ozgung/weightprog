@@ -97,6 +97,16 @@ class MLXBackend(BackendBase):
         mx.eval(a)
         return np.array(a)
 
+    def read_rows(self, name: str, rows) -> np.ndarray:
+        """float32 copy of some rows of a parameter (e.g. unembedding rows) without copying the whole tensor."""
+        mx = self.mx
+        k = self._key(name)
+        if k not in self.params:
+            raise KeyError(f"{name} (mlx key {k}) not in the model")
+        a = self.params[k][mx.array(np.asarray(rows, dtype=np.int32))].astype(mx.float32)
+        mx.eval(a)
+        return np.array(a)
+
     def weight_names(self) -> list[str]:
         return sorted("model.language_model." + k.removeprefix(self._pre) for k in self.params)
 
@@ -234,7 +244,7 @@ class MLXBackend(BackendBase):
             o = mx.fast.scaled_dot_product_attention(q, k, v, scale=att.scale, mask="causal")
         return att.o_proj(o.transpose(0, 2, 1, 3).reshape(B, L, -1)), (k, v), q
 
-    def capture(self, ids, positions, layers=(), what=("resid",), attn_layers=()) -> dict:
+    def capture(self, ids, positions, layers=(), what=("resid",), attn_layers=(), patch_resid=None) -> dict:
         mx = self.mx
         import mlx.nn as nn
         from mlx_lm.models.gemma4_text import geglu
@@ -304,6 +314,11 @@ class MLXBackend(BackendBase):
                 h = h + layer.post_per_layer_input_norm(layer.per_layer_projection(g))
             if layer.layer_scalar is not None:
                 h = h * layer.layer_scalar
+            if patch_resid and i in patch_resid:  # activation patching: overwrite the residual after layer i
+                hp = np.array(h.astype(mx.float32))
+                for p_, v in patch_resid[i].items():
+                    hp[0, int(p_)] = np.asarray(v, dtype=np.float32)
+                h = mx.array(hp).astype(h.dtype)
             if want and "resid" in what:
                 keep["resid"].append(f32(h[0, pos]))
             mx.eval(h)

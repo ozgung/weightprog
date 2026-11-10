@@ -1,4 +1,4 @@
-"""Matched random controls for a frozen edit (the gate's size-matched references).
+"""Matched random controls for an edit: the size-matched null an evaluation compares against.
 
 For every module of the source edit (B [out, r], A [r, in]) draw Gaussian B', A' of the same shape and scale both by
 sqrt(||BA||_F / ||B'A'||_F), so the control has the same modules, the same rank and the same per-module Frobenius norm

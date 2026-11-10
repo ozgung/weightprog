@@ -55,7 +55,7 @@ logits = softcap(E @ norm(out_last)),  softcap(z) = 30 tanh(z / 30)
 
 weightprog's canonical names are the HF checkpoint's; `layer_scalar` has no `.weight` suffix.
 
-## Tool calls
+## Tool calls (if your target involves the model's tool use)
 
 Gemma 4 renders a call as `<|tool_call>call:NAME{k1:v1,k2:v2}<tool_call|>`, keys in sorted order, strings wrapped
 in the single token `<|"|>` with no escaping inside, booleans `true`/`false`. So `edit_file` arguments come as

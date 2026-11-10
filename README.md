@@ -1,35 +1,22 @@
 # weightprog
 
-Gradient-free **weight programming** of Gemma 4 by frontier-model proposers, with a **pre-registered verification
-gate**. One backend interface over **MLX** (Apple silicon) and **PyTorch** (CUDA/CPU).
-
-A proposer (Claude Code, Codex, or you) gets a budget of forward passes through a server, reads activations,
-forms a hypothesis about a failure, and writes a low-rank edit `W' = W + B A` in closed form: no gradients, no
-training. The gate then decides, on held-out repositories the proposer never saw, whether the edit changes the
-targeted behaviour beyond random edits of the same size, without breaking what already worked.
+Edit a **Gemma 4** model's weights directly, in closed form, to change one behaviour: no gradient training. Hand
+this repository to your coding agent (Claude Code, Codex, ...) together with a description of what you want changed;
+it gives the agent the instruments, the constructions and a workflow, and it tells you honestly whether the edit
+worked. Initial target model: **Gemma 4 E4B**. MLX (Apple silicon) and PyTorch (CUDA/CPU) backends.
 
 ```
-proposer (sandboxed)            forward-pass server              gate (pre-registered)
-  kernel: read W, save B, A  ->  gen / read requests, budget  ->  frozen edit vs base vs matched random edits
-  notebook, scratch              base cache, expect_edit pin      sign tests, Holm, guards, bootstrap, BLOCK on gaps
+your cases (JSONL)  ->  census of the base model  ->  locate the decision token, read activations
+     -> closed-form edit W' = W + B A (gate + direction, ablation)  ->  predict its effect for free
+     -> eval: base vs edit vs matched random edits, keep cases, KL/NLL side effects  ->  export as a LoRA adapter
 ```
 
-Status: alpha (0.1.0). Initial target model: Gemma 4 E4B. Tested offline on tiny random Gemma 4 configs only; see
-[docs/real-model-validation.md](docs/real-model-validation.md) for the real-model checks and how to run them.
+**For agents:** start with [AGENTS.md](AGENTS.md), then [skills/weight-editing](skills/weight-editing/SKILL.md) and the
+recipes in [docs/recipes](docs/recipes/).
 
-## What is in the box
-
-| Module | What it does |
-|---|---|
-| `weightprog.backends` | `get_backend("mlx" \| "torch")`: load, tokenizer, `edits()` context (fp32 add, exact restore), `generate` (prefill once, cache copied per draw; draw 0 greedy), multi-segment `decode_segments` (generate / teacher-force on one cache), native `logprobs`, `capture` (resid, resid_pre, resid_mid, mlp, mlp_out, pli, attention probabilities, logits), `read_weight` |
-| `weightprog.edits` | `ModuleEdit` / `EditSet` (npz with `module, B, A, meta`), validation (allowed modules, shapes, rank ≤ 128, finite, no whole-tensor rescale), norms, `export_peft` (adapter whose delta equals `B @ A` exactly) |
-| `weightprog.controls` | matched random controls: same modules, ranks and per-module Frobenius norm, seeded |
-| `weightprog.replay` | call records, the Gemma 4 tool-call codec (`<\|"\|>` strings, sorted keys), frozen-prefix replay and full-call replay (regenerate several arguments in order) |
-| `weightprog.scoring` | escape-artefact, exact-copy and compile metrics; pluggable replacement function (exact match built in; optional adapter for the competition harness's `swegemma.edit.apply_replacement`) |
-| `weightprog.gate` | `GateSpec` + `analyze()`: paired task-macro sign tests vs base and controls, Holm, guards, fixed-sequence secondary, bootstrap CIs; completeness checks that BLOCK; the full-call compile-guard amendment; a pre-registration template |
-| `weightprog.construct` | closed-form constructors: direction ablation, "gate + direction" down_proj edits (ridge gates, least-squares logit directions), and `predict_logit_shift` (exact tail recomputation or first order) |
-| `weightprog.proposer` | the budget server (file queue), the proposer-side kernel, a brief template, packet builder, macOS Seatbelt launchers for Claude Code and Codex, transcript audit |
-| `skills/` | Agent Skills: `weight-programming` (proposer playbook), `edit-gate` (pre-register and run the gate), `gemma4-internals` |
+Status: alpha (0.2). The backends are checked against the study's real-model generations on E4B
+([docs/real-model-validation.md](docs/real-model-validation.md)); everything else is tested offline on tiny random
+Gemma 4 configs.
 
 ## Install
 
@@ -39,110 +26,112 @@ pip install -e ".[torch]"                # CUDA or CPU (transformers >= 5.5 with
 pip install -e ".[mlx,torch,peft,dev]"   # everything, for the tests
 ```
 
-The core needs only numpy and tokenizers: the kernel, edits, controls, gate and scoring run without a deep-learning
-framework (the safetensors reader widens bf16 itself).
-
 ## Quickstart (tiny random model, seconds on a laptop)
 
 ```python
 import numpy as np
 from weightprog.testing import write_tiny_model
-from weightprog.backends import get_backend
+from weightprog.evaluate import open_model, run, compare
+from weightprog.target import Case
+from weightprog.probe import divergence, collect_tail
+from weightprog.construct import LogitPath, fit_gate, logit_direction, gate_direction_edit, predict_logit_shift
 from weightprog.edits import EditSet
-from weightprog.construct import TailState, fit_gate, gate_direction_edit, logit_direction, predict_logit_shift
+from weightprog.controls import matched_control
 
-d = write_tiny_model("/tmp/tiny_g4")                       # random Gemma 4 layout, char tokenizer
-be = get_backend("mlx", d, dtype="float32", device="cpu")  # or get_backend("torch", d, dtype="float32", device="cpu")
-ids = be.tokenizer.encode("def f(x):\n    return x + 1  # some code to read")
-pos = list(range(5, len(ids)))
+d = write_tiny_model("/tmp/tiny_g4")                       # random Gemma 4 layout, character tokenizer
+be = open_model(d, backend="mlx", dtype="float32", device="cpu")
+tok, L = be.tokenizer, be.spec.n_layers - 1
 
-# read the last layer's MLP inputs, then build a gate + direction edit in closed form
-L = be.spec.n_layers - 1
-st = TailState.from_backend(be, ids, pos, L)
-e, x = be.tokenizer.token_to_id("e"), be.tokenizer.token_to_id("x")
-direction = logit_direction(st.path, {e: -1.0, x: +1.0})          # lower "e", raise "x"
-gate = fit_gate(st.act, np.array([float(i % 2 == 0) for i in range(len(pos))]), lam=1e-3)
-edit = gate_direction_edit(L, gate[None], direction[None], alpha=2.0)
+# where does "x = obj." choose between "m..." and "d..."?
+dv = divergence(tok, "x = obj.", "model()", "dict()")
+st = collect_tail(be, [(dv.prefix_ids, [len(dv.prefix_ids) - 1]), (tok.encode("def f(a):\n    return a"), [3, 6, 9])], L)
+gate = fit_gate(st.act, np.r_[1.0, 0.0, 0.0, 0.0], lam=1e-3)                  # on at the decision, off elsewhere
+direction = logit_direction(LogitPath.from_backend(be, L), {dv.good_id: +1.0, dv.bad_id: -1.0})
+edit = gate_direction_edit(L, gate[None], direction[None], alpha=3.0)
+print(predict_logit_shift(st, edit, [dv.good_id, dv.bad_id]).round(2))        # exact, no forward pass
 
-# predict, then measure
-pred = predict_logit_shift(st, edit, [e, x], "exact")
-base = be.capture(ids, pos, what={"logits"})["logits"][:, [e, x]]
-with be.edits(EditSet([edit])):                            # applied for the block, restored exactly after
-    new = be.capture(ids, pos, what={"logits"})["logits"][:, [e, x]]
-print(np.abs(pred - (new - base)).max())                   # float32 rounding
+cases = [Case(id="t", prompt="x = obj.", good=[r"^m"], bad=[r"^d"], max_new=4),
+         Case(id="k", prompt="def g(a):\n    return", role="keep", max_new=4)]
+arms = {"base": None, "edit": EditSet([edit]), "rand1": matched_control(EditSet([edit]), seed=1)}
+rows = run(be, cases, arms, draws=2)
+print("\n".join(compare(rows, arm="edit", controls=["rand1"])["summary"]))   # on a random model: shows the calls only
 ```
 
-The same flow from the command line (synthetic edit_file calls from `weightprog.testing.synthetic`):
+On a real model the same steps run on your own cases; `docs/recipes/context-token-choice.md` is a complete worked
+version and `examples/spelling/cases.jsonl` its case file.
+
+## Command line
 
 ```bash
-weightprog tiny /tmp/tiny_g4
-weightprog replay frozen --backend mlx --model-dir /tmp/tiny_g4 --dtype float32 --calls CS/calls.jsonl --keys CS/usable_keys.txt --out G/gen_base.jsonl
-weightprog controls G/cand G/cand_rand1 --seed 20261115
-weightprog score frozen G/gen_base.jsonl --calls CS/calls.jsonl --files CS/files
-weightprog gate --gate-dir G --keys CS/usable_keys.txt --calls CS/calls.jsonl --files CS/files --m 1 cand
-weightprog export-peft G/cand/edit adapter/
+weightprog census --model-dir M --cases cases.jsonl --split tune -v           # how the base model behaves
+weightprog eval --model-dir M --cases cases.jsonl --split tune --edit edit/ --controls 2 --side-effects --report r.json
+weightprog render --cases cases.jsonl --model-dir M --id case-7                # the exact prompt text
+weightprog validate-edit edit/ --model-dir M
+weightprog export-peft edit/ adapter/                                          # PEFT LoRA, delta == B @ A exactly
+weightprog tiny /tmp/tiny                                                      # a tiny random checkpoint for dry runs
 ```
 
-`tests/test_cli.py` runs this pipeline end to end.
+## What is in the box
 
-## Case study: escape artefacts in Gemma 4 E4B's edit calls
+| Module | What it does |
+|---|---|
+| `weightprog.backends` | `get_backend("mlx" \| "torch")`: load, tokenizer, `edits()` context (fp32 add, exact restore), `generate` (draw 0 greedy, then sampled at the served settings), multi-segment decoding, native `logprobs`, `capture` (resid, resid_pre, resid_mid, mlp, mlp_out, pli, attention probabilities, logits), `read_weight` |
+| `weightprog.target` | cases: prompt or chat messages, role (target / keep), split, group, a rule (regexes, a check function, or a contrast pair) |
+| `weightprog.evaluate` | `open_model`, `run` (all cases under all arms, paired seeds; `reuse_rows` for cached base rows), `side_effects` (KL and NLL on held-apart reference prose, code and chat), `compare` + `Criteria` (target vs base and every matched control with a group-bootstrap check, keep cases against the controls' noise floor, side effects; verdict PASS / FAIL / INCOMPLETE) |
+| `weightprog.probe` | `divergence` (the deciding token), `decision_from_text` (the deciding token inside the model's own generations), `margins`, `collect_tail` (one layer's MLP inputs over many examples), `layer_sweep` and `readout` (cross-validated AUC: where is the choice readable?), `patch_effect` / `patch_sweep` (activation patching: where is it caused?), `measure_logit_shift` (any layer) |
+| `weightprog.construct` | closed-form constructors: gate + direction edits (ridge gates with `cv_gate`, least-squares logit directions), the covariance-whitened key -> value update (`second_moment`, `kv_update`), unit patching (`quiet_units`, `unit_patch`), null-space restriction (`null_space_basis`, `project_edit`), residual-direction writes for any layer, direction ablation, and `predict_logit_shift` (exact for the last layer) |
+| `weightprog.edits` | `ModuleEdit` / `EditSet` (npz with `module, B, A, meta`; `merge` sums two edits of one module), validation (allowed modules, shapes, rank <= 128, finite, no whole-tensor rescale), norms, `realised_fraction` (what survives the bfloat16 cast), `export_peft` |
+| `weightprog.controls` | matched random edits: same modules, ranks and per-module Frobenius norm, seeded |
+| `weightprog.prompts` | `render_chat`: the checkpoint's own chat template (fallback: Gemma 4's turn layout) |
+| `skills/` | Agent Skills: `weight-editing` (the workflow), `gemma4-internals` (architecture facts that matter for edits) |
 
-Gemma 4 E4B, as the model inside a coding agent, often writes a literal `\n` or `\"` inside an `edit_file`
-old_string where the file has a real newline or quote (an *escape artefact*; 100 of 640 base generations on the
-fresh gate set). Two frontier models, each in a fresh sandboxed context with 25 forward passes on training-repo data
-only, wrote frozen low-rank edits. The registered round-2 gate ran on 320 calls x 2 draws from 101 tasks in 69
-held-out repositories. Full write-up: [docs/case-study-escape-artefacts.md](docs/case-study-escape-artefacts.md).
+## Where it came from, and what it has and has not shown
 
-| | Opus 5.5 (`opus_r2`) | Fable 5.1 (`fable_r2`) |
-|---|---|---|
-| Edit | 4 modules in layers 40-41 (ranks 1, 40, 40, 40) | rank 2 on layer 41 `mlp.down_proj` |
-| Escape artefacts, base -> edit (of 640) | 100 -> 77 | 100 -> 47 |
-| Tasks with fewer / more artefacts | 9 / 0 | 20 / 0 |
-| Primary p (max over base and two matched controls) / Holm threshold | 0.0107 / 0.05: pass | 9.5e-7 / 0.025: pass |
-| Matched random controls vs base (artefacts) | -0.2 and +0.1 points | 0 and 0 |
-| Repo-clustered 95 % CI of the artefact effect (points) | -7.7 to -1.2 | -15.4 to -5.1 |
-| Acceptance, task-macro vs base (guard >= -1 point) | +0.39: pass | -1.01: fail |
-| Served-ok calls lost, draw 0 / 1 (limit 2 each) | 2 / 3: fail | 5 / 5: fail |
-| Registered verdict | not passed | not passed |
+The library was built for, and then generalised from, a study in which frontier models edited Gemma 4 E4B to stop
+it writing escaped text into a coding agent's edit calls. Every edit changed the target on 69 held-out repositories
+beyond random edits of the same size, and none passed the study's pre-registered gate: each also broke a few
+outputs the base model had right. Gradient-trained LoRA adapters failed the same way. What carries over to your own
+target is in [docs/recipes/lessons-escape-artefacts.md](docs/recipes/lessons-escape-artefacts.md). The study's
+experiment kit (tool-call replay, the registered gate, the sandboxed forward-pass server) lives in the project
+repository as `weightprog_study`, not here.
 
-**Honest limits.** Both edits change the targeted behaviour on unseen repositories beyond matched random edits of
-the same size. Neither passed the full registered gate: both broke a few copies the base model already got right
-(the served-ok guard), and Fable's edit also missed acceptance non-inferiority by 0.01 points. No edit has been
-shown to raise SWE task scores; the registered plan sends only a gate-passing edit to an agent-level test, so none
-went. The study also found that its own registered compile guard was confounded by the frozen-prefix replay (the
-"compile trap"; amended before any candidate generation, see `weightprog.gate.fullcall`).
+## Related methods
 
-## Repository layout
+weightprog packages closed-form edits that are known from the model-editing and interpretability literature, for an
+agent to apply to its own target, and adds the evaluation around them:
 
-```
-src/weightprog/   library (backends, edits, controls, replay, scoring, gate, construct, proposer, cli, testing)
-skills/           Agent Skills (SKILL.md with name/description frontmatter)
-docs/             architecture, case study, real-model validation
-scripts/          real-model validation scripts (not run in CI)
-tests/            pytest, offline, tiny random models only
-```
+- rank-one and mass-editing of MLP weights as key -> value memories with a covariance-whitened update (ROME: Meng et
+  al., 2022; MEMIT: Meng et al., 2023) - `construct.kv_update`;
+- null-space constrained edits that leave preserved inputs unchanged (AlphaEdit: Fang et al., 2025) -
+  `construct.null_space_basis`, `project_edit`;
+- neuron patches (Knowledge Neurons: Dai et al., 2022; T-Patcher: Huang et al., 2023), here by rewiring existing
+  low-use units in closed form - `construct.unit_patch`;
+- activation patching / causal tracing to find where a behaviour is caused (Vig et al., 2020; Meng et al., 2022) -
+  `probe.patch_effect`, `patch_sweep`;
+- removing a feature by projecting a direction out of the weights (directional ablation, e.g. Arditi et al., 2024)
+  - `construct.ablate_output` / `ablate_input`;
+- adding a direction to the residual stream (activation steering: Turner et al., 2023; representation engineering:
+  Zou et al., 2023), here written into the weights with Gemma 4's post-norms - `construct.residual_write_direction`;
+- gated logit-space directions solved through the unembedding (logit lens: nostalgebraist, 2020), with an exact
+  effect prediction for the last layer - `construct.gate_direction_edit`, `predict_logit_shift`;
+- language-model proposers that write weights directly (weight-space programming: Takehi et al., see Credit).
 
 ## Tests
 
 ```bash
-pytest -q        # offline; tiny random Gemma 4 configs; both backends on CPU
-WEIGHTPROG_GATE_DIR=.../gate_r2 WEIGHTPROG_REPLAY_DIR=.../replay_ood pytest tests/test_gate_regression.py tests/test_controls.py
+pytest -q        # offline; tiny random Gemma 4 configs; both backends on CPU; the recipes and the quickstart run
 ```
-
-The regression tests read the study's scored generation files (not distributed) and check that the library gate
-reproduces the registered report `gate_r2_report.json` exactly and that the matched controls are bit-identical.
 
 ## Data, weights and licences
 
-- Code: Apache-2.0 (LICENSE, NOTICE).
-- No model weights, no edit files, no task data, prompts, file states or gold patches are in this repository.
-  Edits and adapters computed from Gemma weights are model derivatives governed by the Gemma terms of use;
-  publishing them is your decision.
-- `swegemma` (the competition harness) is not vendored; `SwegemmaReplacer` imports it only if it is installed.
+- Code: Apache-2.0 (LICENSE, NOTICE). The built-in reference texts for the side-effect check were written for this
+  library and are under the same licence.
+- No model weights, edits or adapters are in this repository. Edits and adapters computed from Gemma weights are
+  model derivatives governed by the Gemma terms of use; publishing them is your decision.
 
 ## Credit
 
 Weight-space programming by language-model proposers is prior work: Takehi, Teoh, Zhang and Khattab,
-"weight-space programming" (https://rikiyat.github.io/blog/weight-space-programming/). This library adds a
-two-backend toolkit for Gemma 4, agent tool-call replay and scoring, and a pre-registered gate with matched random
-controls on held-out repositories.
+"weight-space programming" (https://rikiyat.github.io/blog/weight-space-programming/). weightprog adds a
+two-backend toolkit for Gemma 4, case-based evaluation against matched random edits with keep cases and side
+effects, and a workflow written for coding agents.

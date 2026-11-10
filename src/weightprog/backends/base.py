@@ -1,6 +1,6 @@
 """The one interface every backend implements, plus the pieces they share (tokenizer, sampling, decode segments).
 
-A backend owns one loaded Gemma 4 model and offers exactly the operations a proposer, a replay or a gate needs:
+A backend owns one loaded Gemma 4 model and offers the operations an editor and an evaluation need:
 
     be = get_backend("mlx")            # or "torch"
     be.load(model_dir, dtype="bfloat16")
@@ -110,7 +110,7 @@ class Tokenizer:
 
 
 def seed_of(key: str, draw: int) -> int:
-    """Per-(call, draw) seed of the forward-pass server: first 8 hex digits of sha1("key|draw")."""
+    """Per-(key, draw) seed: first 8 hex digits of sha1("key|draw") (used by evaluate.run with key = "seed|case id")."""
     return int(hashlib.sha1(f"{key}|{draw}".encode()).hexdigest()[:8], 16)
 
 
@@ -156,9 +156,12 @@ class Backend(Protocol):
     def logprobs(self, ids: Sequence[int], positions: Sequence[int]) -> np.ndarray: ...
 
     def capture(self, ids: Sequence[int], positions: Sequence[int], layers: Iterable[int] = (),
-                what: Iterable[str] = ("resid",), attn_layers: Iterable[int] = ()) -> dict[str, np.ndarray]: ...
+                what: Iterable[str] = ("resid",), attn_layers: Iterable[int] = (),
+                patch_resid: dict[int, dict[int, np.ndarray]] | None = None) -> dict[str, np.ndarray]: ...
 
     def read_weight(self, name: str) -> np.ndarray: ...
+
+    def read_rows(self, name: str, rows: Sequence[int]) -> np.ndarray: ...
 
     def weight_names(self) -> list[str]: ...
 

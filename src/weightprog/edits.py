@@ -1,10 +1,10 @@
-"""Low-rank module edits W' = W + B @ A: the unit every proposer submits and every gate judges.
+"""Low-rank module edits W' = W + B @ A: the unit you build, evaluate and export.
 
     from weightprog.edits import EditSet, ModuleEdit
     es = EditSet.load_dir("run/edit")             # *.npz with keys module, B, A, meta (the original kernel's format)
     es.validate(spec, weights)                      # allowed module, shapes, rank <= 128, finite, no whole-tensor rescale
     es.norms(weights)                               # per module: rank, ||BA||_F, ||W||_F, relative change
-    es.save_dir("out/edit"); es.snapshot()          # {file name: sha256}, as the server pins with expect_edit
+    es.save_dir("out/edit"); es.snapshot()          # {file name: sha256}: record which edit a result belongs to
     export_peft(es, "adapter_dir", spec)            # adapter_config.json + adapter_model.safetensors, delta == B @ A
 
 `weights` is anything with `get(name) -> np.ndarray` and `shape(name)` (a SafetensorsReader, a backend's
@@ -126,8 +126,21 @@ class EditSet:
             self.add(e)
 
     # ---- container ---------------------------------------------------------------------------------------
-    def add(self, e: ModuleEdit) -> None:
+    def add(self, e: ModuleEdit, replace: bool = False) -> None:
+        """Add a module edit. A second edit of the same module raises unless replace=True; to keep both, use
+        `merge` (which adds them: B = [B1 B2], A = [A1; A2])."""
+        if e.module in self._e and not replace:
+            raise EditError(f"{e.module} is already edited: use merge() to add both, or add(..., replace=True)")
         self._e[e.module] = e
+
+    def merge(self, e: ModuleEdit) -> None:
+        """Add `e` to this set; if its module is already edited, the two low-rank terms are summed (ranks add)."""
+        if e.module not in self._e:
+            self._e[e.module] = e
+            return
+        o = self._e[e.module]
+        self._e[e.module] = ModuleEdit(e.module, np.concatenate([o.B, e.B], axis=1), np.concatenate([o.A, e.A], axis=0),
+                                       {"construct": "merged", "parts": [o.meta, e.meta]})
 
     def remove(self, module: str) -> bool:
         return self._e.pop(canonical(module), None) is not None
@@ -192,7 +205,7 @@ class EditSet:
 
     @staticmethod
     def snapshot(d: str | Path) -> dict[str, str]:
-        """{file name: sha256} of the *.npz files in d (the server's expect_edit pin)."""
+        """{file name: sha256} of the *.npz files in d (pin the exact edit a measurement belongs to)."""
         return {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(Path(d).glob("*.npz"))}
 
     # ---- checks ------------------------------------------------------------------------------------------
@@ -214,6 +227,26 @@ class EditSet:
     def summary(self) -> dict:
         return {"modules": self.modules(), "ranks": [e.rank for e in self],
                 "delta_fro": [float(np.linalg.norm(e.delta())) for e in self]}
+
+
+def bf16_round(x: np.ndarray) -> np.ndarray:
+    """Round float32 values to bfloat16 (round to nearest, ties to even) and return them as float32."""
+    b = np.ascontiguousarray(x, dtype=np.float32).view(np.uint32)
+    r = ((b + 0x7FFF + ((b >> 16) & 1)) & 0xFFFF0000).astype(np.uint32)
+    return r.view(np.float32)
+
+
+def realised_fraction(edits: "EditSet", read_weight, dtype: str = "bfloat16") -> dict[str, float]:
+    """Per module: ||W' - W||_F / ||B A||_F after the edit is cast back to the model's dtype. Small edits on a
+    bfloat16 model can be partly rounded away (W' = bf16(W + B A)); `predict_logit_shift` and an unmerged LoRA adapter
+    do not see that loss, the edited model does. Values well below 1 mean: make the edit stronger or accept less."""
+    out = {}
+    for e in edits:
+        W = read_weight(e.module).astype(np.float32)
+        d = e.delta().astype(np.float32)
+        W2 = bf16_round(W + d) if dtype == "bfloat16" else (W + d)
+        out[e.module] = float(np.linalg.norm(W2 - W) / max(np.linalg.norm(d), 1e-30))
+    return out
 
 
 class WeightSource:

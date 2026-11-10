@@ -1,6 +1,6 @@
 """Exact, dependency-free statistics for paired task-level comparisons (no scipy).
 
-Every function reproduces the arithmetic of the study's gate scripts exactly (same summation order, same RNG
+Every function reproduces the arithmetic of the escape-artefact study's gate scripts exactly (same summation order, same RNG
 calls), so a re-analysis returns bit-identical numbers.
 """
 

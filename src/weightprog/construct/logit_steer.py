@@ -67,11 +67,14 @@ class LogitPath:
 
     @classmethod
     def from_backend(cls, be, layer: int) -> "LogitPath":
-        return cls.from_weights(be.read_weight, layer, be.spec.softcap, be.spec.rms_eps)
+        """Unembedding rows are read on demand (`be.read_rows`), never the whole [vocab, hidden] table."""
+        name = PRE + "embed_tokens.weight"
+        rows = (lambda ids: be.read_rows(name, list(ids)).astype(np.float64)) if hasattr(be, "read_rows") else None
+        return cls.from_weights(be.read_weight, layer, be.spec.softcap, be.spec.rms_eps, rows=rows)
 
     @classmethod
     def from_reader(cls, reader, spec, layer: int) -> "LogitPath":
-        """From a SafetensorsReader (proposer side: no model load; unembedding rows read on demand)."""
+        """From a SafetensorsReader (no model load; unembedding rows read on demand)."""
         return cls.from_weights(reader.get, layer, spec.softcap, spec.rms_eps,
                                 rows=lambda ids: reader.rows(PRE + "embed_tokens.weight", ids).astype(np.float64))
 
@@ -95,13 +98,53 @@ def fit_gate(acts: np.ndarray, target: np.ndarray, weights: np.ndarray | None = 
     return a
 
 
-def gate_direction_edit(layer: int, gates: np.ndarray, directions: np.ndarray, alpha=1.0, note: str = "") -> ModuleEdit:
-    """down_proj edit W' = W + sum_r alpha_r d_r a_r^T. gates [r, d_ff], directions [r, H], alpha scalar or [r]."""
+def gate_direction_edit(layer: int, gates: np.ndarray, directions: np.ndarray, alpha=1.0, note: str = "",
+                        proj: str = "down_proj") -> ModuleEdit:
+    """Edit W' = W + sum_r alpha_r d_r a_r^T of `layers.{layer}.mlp.down_proj` (default) or another projection
+    (`proj="o_proj"`: gates over the attention output, directions in the hidden space). gates [r, in],
+    directions [r, out], alpha scalar or [r]."""
     A = np.atleast_2d(np.asarray(gates, dtype=np.float64))
     D = np.atleast_2d(np.asarray(directions, dtype=np.float64))
     al = np.broadcast_to(np.asarray(alpha, dtype=np.float64), (D.shape[0],))
-    return ModuleEdit(module_name(layer, "down_proj"), (D * al[:, None]).T, A,
+    return ModuleEdit(module_name(layer, proj), (D * al[:, None]).T, A,
                       {"construct": "gate_direction", "rank": int(A.shape[0]), "alpha": al.tolist(), "note": note})
+
+
+def residual_write_direction(be, layer: int, r: np.ndarray, block: str = "mlp") -> np.ndarray:
+    """Module-output direction u [H] such that the block's contribution to the residual moves along the residual
+    direction r [H] (Gemma 4 post-norms: residual += rms_norm(out) * w_post, so u = r / w_post, normalised).
+    block="mlp" for down_proj (post_feedforward_layernorm), "attn" for o_proj (post_attention_layernorm). Use it to
+    write a steering direction (e.g. a difference of means of `resid` captures) into any layer."""
+    norm = "post_feedforward_layernorm" if block == "mlp" else "post_attention_layernorm"
+    w = be.read_weight(f"{PRE}layers.{layer}.{norm}.weight").astype(np.float64)
+    u = np.asarray(r, dtype=np.float64) / np.where(np.abs(w) < 1e-6, 1e-6, w)
+    return u / np.linalg.norm(u)
+
+
+def cv_gate(acts: np.ndarray, target: np.ndarray, weights: np.ndarray | None = None,
+            lams: Sequence[float] = (0.1, 1.0, 10.0, 100.0), folds: int = 5, seed: int = 0) -> dict:
+    """Choose fit_gate's ridge `lam` by cross-validation: for each lam, out-of-fold gate values on every row, their
+    AUC (target > 0.5 vs not) and the median out-of-fold gate on positives and |gate| on negatives. In-sample gate
+    values say little: with tens of rows and thousands of units a ridge fits its own rows almost by construction."""
+    from ..probe import auc  # local import: probe imports construct
+    X, y = np.asarray(acts, dtype=np.float64), np.asarray(target, dtype=np.float64)
+    w = None if weights is None else np.asarray(weights, dtype=np.float64)
+    idx = np.random.default_rng(seed).permutation(len(y))
+    out = {}
+    for lam in lams:
+        g = np.zeros(len(y))
+        for k in range(folds):
+            te = idx[k::folds]
+            tr = np.setdiff1d(idx, te)
+            a = ridge(X[tr], y[tr], lam, None if w is None else w[tr])
+            g[te] = X[te] @ a
+        pos = y > 0.5
+        out[float(lam)] = {"auc": auc(g, pos) if pos.any() and (~pos).any() else None,
+                           "median_pos": float(np.median(g[pos])) if pos.any() else None,
+                           "median_abs_neg": float(np.median(np.abs(g[~pos]))) if (~pos).any() else None,
+                           "p95_abs_neg": float(np.percentile(np.abs(g[~pos]), 95)) if (~pos).any() else None,
+                           "oof_gate": g}
+    return out
 
 
 @dataclass
@@ -121,17 +164,25 @@ class TailState:
     extra: dict = field(default_factory=dict)
 
     @classmethod
-    def from_backend(cls, be, ids, positions, layer: int) -> "TailState":
-        cap = be.capture(ids, positions, layers=[layer], what={"resid_mid", "mlp", "pli"})
+    def weights_from_backend(cls, be, layer: int) -> dict:
+        """The layer's tail weights (read once; share them across many TailStates of the same layer)."""
         rw = be.read_weight
         L = f"{PRE}layers.{layer}."
-        has_pl = "pli" in cap
-        return cls(layer, layer == be.spec.n_layers - 1, cap["resid_mid"][0].astype(np.float64), cap["mlp"][0].astype(np.float64),
-                   cap["pli"][0].astype(np.float64) if has_pl else None, rw(L + "mlp.down_proj.weight").astype(np.float64),
-                   LogitPath.from_backend(be, layer),
-                   rw(L + "per_layer_input_gate.weight").astype(np.float64) if has_pl else None,
-                   rw(L + "per_layer_projection.weight").astype(np.float64) if has_pl else None,
-                   rw(L + "post_per_layer_input_norm.weight").astype(np.float64) if has_pl else None)
+        has_pl = any(n == L + "per_layer_input_gate.weight" for n in be.weight_names())
+        return {"layer": layer, "is_last": layer == be.spec.n_layers - 1,
+                "W_down": rw(L + "mlp.down_proj.weight").astype(np.float64), "path": LogitPath.from_backend(be, layer),
+                "pl_gate": rw(L + "per_layer_input_gate.weight").astype(np.float64) if has_pl else None,
+                "pl_proj": rw(L + "per_layer_projection.weight").astype(np.float64) if has_pl else None,
+                "pl_norm": rw(L + "post_per_layer_input_norm.weight").astype(np.float64) if has_pl else None}
+
+    @classmethod
+    def from_backend(cls, be, ids, positions, layer: int, weights: dict | None = None) -> "TailState":
+        w = weights or cls.weights_from_backend(be, layer)
+        cap = be.capture(ids, positions, layers=[layer], what={"resid_mid", "mlp", "pli"})
+        has_pl = "pli" in cap and w["pl_gate"] is not None
+        return cls(layer, w["is_last"], cap["resid_mid"][0].astype(np.float64), cap["mlp"][0].astype(np.float64),
+                   cap["pli"][0].astype(np.float64) if has_pl else None, w["W_down"], w["path"],
+                   w["pl_gate"], w["pl_proj"], w["pl_norm"])
 
     def mlp_out(self) -> np.ndarray:
         return self.act @ self.W_down.T
