@@ -58,7 +58,7 @@ print("\n".join(compare(rows, arm="edit", controls=["rand1"])["summary"]))   # o
 ```
 
 On a real model the same steps run on your own cases; `docs/recipes/context-token-choice.md` is a complete worked
-version and `examples/spelling/cases.jsonl` its case file.
+version and `examples/spelling/cases.jsonl` its case file (the case format only: on E4B those prompts never elicit the word, see the example's README).
 
 ## Command line
 
