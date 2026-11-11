@@ -15,8 +15,10 @@ your cases (JSONL)  ->  census of the base model  ->  locate the decision token,
 recipes in [docs/recipes](docs/recipes/).
 
 Status: alpha (0.2). The backends are checked against the study's real-model generations on E4B
-([docs/real-model-validation.md](docs/real-model-validation.md)); everything else is tested offline on tiny random
-Gemma 4 configs.
+([docs/real-model-validation.md](docs/real-model-validation.md)). On real E4B, the usability test
+[below](#does-it-help-an-agent) used the evaluation, the probes and several constructors (among them
+`construct.unit_patch`), and adapters written by `edits.export_peft` were served by vLLM in the study. The rest is
+tested offline on tiny random Gemma 4 configs.
 
 ## Install
 
