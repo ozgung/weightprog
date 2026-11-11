@@ -95,6 +95,34 @@ target is in [docs/recipes/lessons-escape-artefacts.md](docs/recipes/lessons-esc
 experiment kit (tool-call replay, the registered gate, the sandboxed forward-pass server) lives in the project
 repository as `weightprog_study`, not here.
 
+## Does it help an agent?
+
+A first test, with one run per arm: too small to settle the question either way. The target, new to the library and
+fixed in advance: in projects pinned to pydantic 1, stop E4B writing pydantic 2 names (`.model_json_schema()` for
+`.schema()`). Claude Opus 5.5 had four hours with the library and four without it; Claude Fable 5.2 with it followed.
+A judge fixed in advance, written by the library's author, scored the edits on held-out cases.
+
+| 54 held-out cases | Opus, library | Opus, no library | Fable, library |
+|---|---|---|---|
+| Wrong-version answers ↓ (base 0.29) | **0.00** | 0.04 | **0.00** |
+| Correct pydantic 1 answers ↑ (base 0.25) | **0.56** | 0.40 | 0.40 |
+| Side effects, KL ↓ (random edits 0.0006 to 0.0011) | 0.00007 | 0.00066 | **0.00004** |
+| Unrelated plain-code outputs changed, of 4 ↓ | **1** | 2 | **1** |
+| Verdict | fail | fail | fail |
+| Time to the first evaluated edit ↓ | 33 min | **28 min** | 43 min |
+
+↓ lower is better, ↑ higher is better, best in bold. Rates are over 48 outputs (24 cases, 2 draws each).
+
+- **May help: the edit itself.** Both library runs chose `construct.unit_patch` on layer 41 on their own and built
+  the cleaner edits: no wrong-version answers left and a tenth of the side effects or less. The run without the
+  library fitted a ridge gate on layers 30 and 31.
+- **Did not help here: speed and the verdict.** Without the library, Opus wrote its own harness in 18 minutes and
+  evaluated a first edit soonest. All three edits passed on the tuning cases and failed the same held-out check
+  (four unrelated prompts must keep their greedy output), as would three of the six random edits.
+- **Not yet known.** One run per arm cannot separate these differences from chance. Repeated runs, and a weaker agent
+  for which the tooling may matter more, are the next tests. All three agents also wrote a small process to keep the
+  model loaded; weightprog has no such session yet.
+
 ## Related methods
 
 weightprog packages closed-form edits that are known from the model-editing and interpretability literature, for an
