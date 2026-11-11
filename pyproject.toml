@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weightprog"
-version = "0.2.0"
+version = "0.2.1"
 description = "Closed-form weight edits of Gemma 4 for coding agents: instruments, constructions, case-based evaluation against matched random edits, and an agent workflow (MLX and PyTorch backends)."
 readme = "README.md"
 license = "Apache-2.0"
