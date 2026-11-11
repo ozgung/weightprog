@@ -114,7 +114,7 @@ A judge fixed in advance, written by the library's author, scored the edits on h
 ↓ lower is better, ↑ higher is better, best in bold. Rates are over 48 outputs (24 cases, 2 draws each).
 
 - **May help: the edit itself.** Both library runs chose `construct.unit_patch` on layer 41 on their own and built
-  the cleaner edits: no wrong-version answers left and a tenth of the side effects or less. The run without the
+  the cleaner edits: no wrong-version answers left and about a tenth of the side effects or less. The run without the
   library fitted a ridge gate on layers 30 and 31.
 - **Did not help here: speed and the verdict.** Without the library, Opus wrote its own harness in 18 minutes and
   evaluated a first edit soonest. All three edits passed on the tuning cases and failed the same held-out check
