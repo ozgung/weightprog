@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use weightprog, please cite the writeup that describes it (preferred-citation below)."
+type: software
+title: "weightprog"
+version: "0.2.1"
+license: Apache-2.0
+authors:
+  - family-names: "Genc"
+    given-names: "Ozgun"
+repository-code: "https://github.com/ozgung/weightprog"
+preferred-citation:
+  type: generic
+  title: "Tools and Held-Out Tasks for Testing Agent-Written Weight Edits on Gemma 4"
+  authors:
+    - family-names: "Genc"
+      given-names: "Ozgun"
+  year: 2026
+  publisher:
+    name: "Kaggle"
+  notes: "Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track). weightprog: closed-form editing with matched-control checks; 186 offline held-out agent tasks and a 320-call replay set"
+  url: "https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/tools-held-out-tasks-agent-written-weight-edits"

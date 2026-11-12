@@ -165,3 +165,29 @@ Weight-space programming by language-model proposers is prior work: Takehi, Teoh
 "weight-space programming" (https://rikiyat.github.io/blog/weight-space-programming/). weightprog adds a
 two-backend toolkit for Gemma 4, case-based evaluation against matched random edits with keep cases and side
 effects, and a workflow written for coding agents.
+
+## Citation
+
+weightprog is described in the writeup *Tools and Held-Out Tasks for Testing Agent-Written Weight Edits on Gemma 4*
+and was used in the study of *Frontier Models as Weight Editors for Gemma 4 E4B*. If you use it, please cite the
+first; `CITATION.cff` holds the same reference for GitHub's "Cite this repository".
+
+```bibtex
+@misc{genc2026tools,
+  author       = {Genc, Ozgun},
+  title        = {{Tools and Held-Out Tasks for Testing Agent-Written Weight Edits on Gemma 4}},
+  year         = {2026},
+  howpublished = {Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track)},
+  url          = {https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/tools-held-out-tasks-agent-written-weight-edits},
+  note         = {weightprog: closed-form editing with matched-control checks; 186 offline held-out agent tasks and a 320-call replay set}
+}
+
+@misc{genc2026editors,
+  author       = {Genc, Ozgun},
+  title        = {{Frontier Models as Weight Editors for Gemma 4 E4B}},
+  year         = {2026},
+  howpublished = {Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track)},
+  url          = {https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/frontier-models-as-weight-editors-for-gemma-4-e4b},
+  note         = {A gradient-free weight edit cuts a coding agent's escape-code errors from 15 \% to 3 \% in live runs, and shows what such fixes must also keep}
+}
+```
