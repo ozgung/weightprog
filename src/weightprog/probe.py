@@ -51,17 +51,32 @@ def divergence(tokenizer, prompt: str, good: str, bad: str) -> Divergence:
     return Divergence(a[:n], a[n], b[n], a[n:], b[n:])
 
 
-def decision_from_text(tokenizer, prompt: str, generated: str, pattern: str, group: int = 0) -> Divergence | None:
+def decision_from_text(tokenizer, prompt: str, generated: str, pattern: str, group: int = 0, *,
+                       generated_ids: Sequence[int] | None = None) -> Divergence | None:
     """Locate a behaviour inside the model's own generation (e.g. a census row): the token where `pattern` (its
     `group`) starts in `generated`. Returns a Divergence whose prefix_ids end right before that token and whose
     bad_id is that token (good_id = -1, fill it yourself), or None if the pattern does not occur. Use it to harvest
     positives (bad generations of target cases) and hard negatives (good generations of keep cases) at the rows the
-    model really decides on, instead of hand-written prefills only. The text is re-tokenised, so a merge across the
-    boundary can shift the row by a token: check with show_tokens."""
+    model really decides on. With `generated_ids`, preserve the exact prompt and continuation token boundary.
+    Otherwise the text is re-tokenised, so check for a changed boundary."""
     import re
 
     m = re.search(pattern, generated)
-    if not m:
+    if not m or m.start(group) < 0:
+        return None
+    if generated_ids is not None:
+        continuation = list(generated_ids)
+        decoded = tokenizer.decode(continuation)
+        if not decoded.startswith(generated):
+            raise ValueError("generated text must be a prefix of the decoded generated_ids")
+        start = m.start(group)
+        for k in range(len(continuation)):
+            prefix = tokenizer.decode(continuation[:k + 1])
+            # Incomplete byte tokens can decode with a trailing replacement character. Compare
+            # through the matched character so that it is an actual prefix of the full decode.
+            if len(prefix) > start and prefix[:start + 1] == decoded[:start + 1]:
+                return Divergence(tokenizer.encode(prompt) + continuation[:k], -1, continuation[k], [],
+                                  continuation[k:])
         return None
     start = len(prompt) + m.start(group)
     ids = tokenizer.encode(prompt + generated)

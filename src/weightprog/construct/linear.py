@@ -9,15 +9,17 @@ def ridge(X: np.ndarray, y: np.ndarray, lam: float = 1.0, weights: np.ndarray | 
     """Weighted ridge regression without intercept: argmin_a sum_i w_i (x_i . a - y_i)^2 + lam |a|^2.
 
     Solved in whichever form is smaller: primal (X^T W X + lam I)^-1 X^T W y when n >= d, else the dual
-    a = X^T (W X X^T + lam I)^-1 W y. X [n, d], y [n] -> a [d]."""
+    a = X^T (W X X^T + lam I)^-1 W y. X [n, d], y [n] -> a [d].
+    Several targets may share a solve: y [n, k] -> a [d, k]."""
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
     w = np.ones(len(y)) if weights is None else np.asarray(weights, dtype=np.float64)
     n, d = X.shape
+    wy = w * y if y.ndim == 1 else w[:, None] * y
     if n >= d:
-        return np.linalg.solve(X.T @ (X * w[:, None]) + lam * np.eye(d), X.T @ (w * y))
+        return np.linalg.solve(X.T @ (X * w[:, None]) + lam * np.eye(d), X.T @ wy)
     K = X @ X.T
-    c = np.linalg.solve(w[:, None] * K + lam * np.eye(n), w * y)
+    c = np.linalg.solve(w[:, None] * K + lam * np.eye(n), wy)
     return X.T @ c
 
 

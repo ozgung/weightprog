@@ -132,11 +132,12 @@ def reuse_rows(cached: Sequence[dict], cases: Sequence[Case], arm: str, draws: i
 
 def run(backend, cases: Sequence[Case], arms: dict | None = None, draws: int = 2, sampling: Sampling = SERVED,
         seed: str = "weightprog", model_dir: str | Path | None = None,
-        progress: Callable[[str], None] | None = None) -> list[dict]:
+        progress: Callable[[str], None] | None = None, *, include_token_ids: bool = False) -> list[dict]:
     """Generate (or score, for contrast cases) every case under every arm. Returns one row per (arm, case, draw).
 
     `arms` maps a name to an EditSet or None (None = the unedited model). Default: {"base": None}, which is a census
-    of the base model's behaviour."""
+    of the base model's behaviour. Set `include_token_ids` to retain the sampled continuation IDs before string
+    truncation, so probes can recover the exact model prefix without re-tokenizing generated text."""
     arms = arms if arms is not None else {"base": None}
     tok = backend.tokenizer
     stops = stop_ids(tok)
@@ -159,7 +160,8 @@ def run(backend, cases: Sequence[Case], arms: dict | None = None, draws: int = 2
                                             sampling=sampling)
                     for d, o in enumerate(outs):
                         text = cut_at_stop(tok.decode(o.tokens), c.stop)
-                        rows.append({**base, "draw": d, "text": text, "n_tokens": len(o.tokens),
+                        token_data = {"token_ids": [int(t) for t in o.tokens]} if include_token_ids else {}
+                        rows.append({**base, **token_data, "draw": d, "text": text, "n_tokens": len(o.tokens),
                                      "label": judge(text, c) if c.mode == "judged" else None})
                 if progress:
                     progress(f"[{arm}] {k + 1}/{len(cases)} {c.id}")

@@ -63,7 +63,9 @@ n_ord = len(st.act) - n_pos - n_hard
 #    choose the ridge strength out of fold, not from in-sample gate values
 y = np.r_[np.ones(n_pos), np.zeros(n_hard + n_ord)]
 w = np.r_[np.ones(n_pos), 4.0 * np.ones(n_hard), np.ones(n_ord)]
-cv = cv_gate(st.act, y, weights=w, lams=(1.0, 10.0, 100.0))
+# Put both versions of a subject in one fold, and keep all positions of one reference text together.
+groups = FIT + FIT + [f"reference-{i}" for i, (_, pos) in enumerate(items[n_pos + n_hard:]) for _ in pos]
+cv = cv_gate(st.act, y, weights=w, lams=(1.0, 10.0, 100.0), groups=groups)
 lam = max(cv, key=lambda l: cv[l]["auc"])
 print("cv:", {l: round(v["auc"], 3) for l, v in cv.items()}, "-> lam", lam)
 gate = fit_gate(st.act, y, weights=w, lam=lam)
@@ -99,6 +101,10 @@ with be.edits(EditSet([kv])):
     print("kv variant on check rows: US flipped", (margins(be, trip(pos_c)) > 0).mean(),
           " British kept", (margins(be, trip(neg_c)) < 0).mean())
 ```
+
+If the decision comes from a generated answer, use `evaluate.run(..., include_token_ids=True)` to retain
+the sampled IDs. Pass the row's `token_ids` as `generated_ids=` to `probe.decision_from_text`.
+This preserves a forced prompt boundary when the tokenizer can merge a suffix across it.
 
 ## Then evaluate on generations
 

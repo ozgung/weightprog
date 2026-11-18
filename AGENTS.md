@@ -29,7 +29,7 @@ serve the edited model with standard tooling.
    caused (`probe.patch_sweep`: activation patching between two prompts that differ only in the cause).
 4. **Construct** an edit in closed form (`weightprog.construct`), on rows you fit and then check on other rows:
    - *gate + direction* on a late layer's `mlp.down_proj` (fires where the behaviour is about to happen, pushes the
-     logits the right way); choose the ridge `lam` with `cv_gate`, not by in-sample gate values;
+     logits the right way); choose the ridge `lam` with `cv_gate`, passing `groups=` for paired prompts and repeated contexts;
    - *covariance-whitened key -> value update* (`second_moment` + `kv_update`, the ROME/MEMIT closed form): hits the
      rows you give it and is quiet, by construction, in the directions ordinary text uses;
    - *residual direction* writes for a middle layer (`residual_write_direction`, for style or format behaviours with
@@ -43,7 +43,7 @@ serve the edited model with standard tooling.
    `edits.realised_fraction` (a weak edit can be partly rounded away when cast back to bfloat16).
 6. **Evaluate** on tune: `weightprog eval ... --base-rows base.jsonl` runs your edit and matched random controls
    (reusing the base rows), then checks target (beats base and every control, the good rate really rises), keep
-   (nothing broken beyond the controls' noise) and side effects (KL and NLL on held-apart reference text). A quick
+   (absolute breakage and greedy-change limits from `Criteria`) and side effects (KL and NLL on held-apart reference text). A quick
    look (`--controls 0`, no `--side-effects`) is fine while iterating, but its verdict is INCOMPLETE. Read the rows
    where something broke. Iterate.
 7. **Finish**: evaluate once on holdout with criteria fixed in advance; save the edit and export it

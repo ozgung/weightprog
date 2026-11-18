@@ -122,20 +122,30 @@ def residual_write_direction(be, layer: int, r: np.ndarray, block: str = "mlp") 
 
 
 def cv_gate(acts: np.ndarray, target: np.ndarray, weights: np.ndarray | None = None,
-            lams: Sequence[float] = (0.1, 1.0, 10.0, 100.0), folds: int = 5, seed: int = 0) -> dict:
+            lams: Sequence[float] = (0.1, 1.0, 10.0, 100.0), folds: int = 5, seed: int = 0, *,
+            groups: Sequence[str] | None = None) -> dict:
     """Choose fit_gate's ridge `lam` by cross-validation: for each lam, out-of-fold gate values on every row, their
     AUC (target > 0.5 vs not) and the median out-of-fold gate on positives and |gate| on negatives. In-sample gate
-    values say little: with tens of rows and thousands of units a ridge fits its own rows almost by construction."""
+    values say little: with tens of rows and thousands of units a ridge fits its own rows almost by construction.
+    With `groups`, hold out complete groups to keep related versions of the same prompt in a single fold."""
     from ..probe import auc  # local import: probe imports construct
     X, y = np.asarray(acts, dtype=np.float64), np.asarray(target, dtype=np.float64)
     w = None if weights is None else np.asarray(weights, dtype=np.float64)
-    idx = np.random.default_rng(seed).permutation(len(y))
+    if groups is None:
+        ids = np.arange(len(y))
+    else:
+        if len(groups) != len(y):
+            raise ValueError("groups must contain one label per row")
+        _, ids = np.unique(groups, return_inverse=True)
+    order = np.random.default_rng(seed).permutation(np.unique(ids))
+    if not 2 <= folds <= len(order):
+        raise ValueError("folds must be between two and the number of independent rows or groups")
+    partitions = [np.flatnonzero(np.isin(ids, fold)) for fold in (order[k::folds] for k in range(folds))]
     out = {}
     for lam in lams:
         g = np.zeros(len(y))
-        for k in range(folds):
-            te = idx[k::folds]
-            tr = np.setdiff1d(idx, te)
+        for te in partitions:
+            tr = np.setdiff1d(np.arange(len(y)), te)
             a = ridge(X[tr], y[tr], lam, None if w is None else w[tr])
             g[te] = X[te] @ a
         pos = y > 0.5
@@ -162,6 +172,7 @@ class TailState:
     pl_proj: np.ndarray | None = None    # per_layer_projection [H, Pd]
     pl_norm: np.ndarray | None = None    # post_per_layer_input_norm [H]
     extra: dict = field(default_factory=dict)
+    captured_mlp_out: np.ndarray | None = None  # [P, H], for repeated predictions; stale if W_down changes after capture
 
     @classmethod
     def weights_from_backend(cls, be, layer: int) -> dict:
@@ -185,6 +196,9 @@ class TailState:
                    w["pl_gate"], w["pl_proj"], w["pl_norm"])
 
     def mlp_out(self) -> np.ndarray:
+        """Return the captured raw MLP output when available, or recompute it from weights."""
+        if self.captured_mlp_out is not None:
+            return self.captured_mlp_out
         return self.act @ self.W_down.T
 
     def final_hidden(self, delta: np.ndarray | None = None) -> np.ndarray:
