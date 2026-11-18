@@ -1,5 +1,7 @@
 # weightprog
 
+> **Version described in the Kaggle writeups (12 November 2026):** [v0.2.1](https://github.com/ozgung/weightprog/tree/v0.2.1) ([release](https://github.com/ozgung/weightprog/releases/tag/v0.2.1)). Later versions on `main` add changes made after the competition deadline; 0.2.2 (18 November 2026) ports fixes written by a GPT-6.2 Sol agent during a follow-up usability run.
+
 Edit a **Gemma 4** model's weights directly, in closed form, to change one behaviour: no gradient training. Hand
 this repository to your coding agent (Claude Code, Codex, ...) together with a description of what you want changed;
 it gives the agent the instruments, the constructions and a workflow, and it tells you honestly whether the edit
