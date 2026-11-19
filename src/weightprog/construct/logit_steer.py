@@ -114,11 +114,74 @@ def residual_write_direction(be, layer: int, r: np.ndarray, block: str = "mlp") 
     """Module-output direction u [H] such that the block's contribution to the residual moves along the residual
     direction r [H] (Gemma 4 post-norms: residual += rms_norm(out) * w_post, so u = r / w_post, normalised).
     block="mlp" for down_proj (post_feedforward_layernorm), "attn" for o_proj (post_attention_layernorm). Use it to
-    write a steering direction (e.g. a difference of means of `resid` captures) into any layer."""
+    write a steering direction (e.g. a difference of means of `resid` captures) into any layer.
+    Caution: dividing by w_post inflates the dimensions where it is tiny (down to about 0.001 on E4B), and the norm then
+    rescales the whole output, so a large write lands mostly elsewhere. For kv_update values that must move the
+    residual by a given amount, use `residual_write_value`, which solves under the norm constraint."""
     norm = "post_feedforward_layernorm" if block == "mlp" else "post_attention_layernorm"
     w = be.read_weight(f"{PRE}layers.{layer}.{norm}.weight").astype(np.float64)
     u = np.asarray(r, dtype=np.float64) / np.where(np.abs(w) < 1e-6, 1e-6, w)
     return u / np.linalg.norm(u)
+
+
+def post_norm_reach(n: np.ndarray, scale: np.ndarray, delta: np.ndarray) -> np.ndarray:
+    """The normalised block output u (rms 1) whose residual contribution scale * u comes closest to
+    scale * n + delta: min ||scale (u - n) - delta||^2 subject to ||u||^2 = len(u). n is the current normalised output
+    (rms 1), scale the per-dimension factor the norm output is multiplied by (w_post, times layer_scalar if the target
+    residual is post-scalar), delta the wanted residual change [H].
+
+    Dividing delta by scale (as residual_write_direction does) blows up where scale is tiny (E4B w_post goes down to
+    about 0.001), and the RMS norm then shrinks the whole output, so almost none of delta is written. Here the
+    constraint is kept: Lagrange gives u = scale * b / (scale^2 + mu), b = delta + scale * n, with the scalar mu found by
+    bisection on the norm constraint (monotone on mu > -min scale^2). Closed form plus a scalar search, no gradients."""
+    n = np.asarray(n, dtype=np.float64)
+    g = np.asarray(scale, dtype=np.float64)
+    b = np.asarray(delta, dtype=np.float64) + g * n
+    H = len(n)
+    u_of = lambda mu: g * b / (g ** 2 + mu)  # noqa: E731
+    f = lambda mu: float(np.sum(u_of(mu) ** 2)) - H  # noqa: E731
+    lo = -float(np.min(g ** 2))
+    hi = 1.0
+    while f(hi) > 0:
+        hi *= 2.0
+    near = lo + 1e-9 * max(1.0, abs(lo))
+    if f(near) <= 0:  # the constraint is met even next to the pole: take that point and rescale onto the sphere
+        u = u_of(near)
+        return u * np.sqrt(H / np.sum(u ** 2))
+    lo = near
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if f(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    return u_of(hi)
+
+
+def residual_write_value(be, layer: int, mlp_out: np.ndarray, delta: np.ndarray) -> np.ndarray:
+    """Values R [P, H] for `kv_update`: what layer `layer`'s down_proj must add at P rows so that the residual after
+    the layer (the post-scalar "resid" capture) moves by `delta` ([H], or [P, H] per row), through Gemma 4's
+    post-feedforward norm and layer scalar.
+
+    mlp_out [P, H] is the captured raw down_proj output at those rows (`capture(..., what={"mlp_out"})`). Each row's
+    new output keeps its RMS, so the post-norm sees exactly the solved direction (`post_norm_reach`). Rows that must
+    stay unchanged get R = 0 (give them as keys with zero values). Ignored: the per-layer-input branch, which reads
+    the layer's residual and so responds slightly; after building, measure the realised change with
+    `backend.edits(...)` and `capture(..., what={"resid"})` against delta. On E4B layers 30-38, with delta the size of
+    the version difference of means, this wrote the intended direction with cosine 0.96-0.99 (0.90-0.96 at twice that
+    size); dividing by w_post had given 0.11 at layer 35."""
+    mo = np.atleast_2d(np.asarray(mlp_out, dtype=np.float64))
+    dl = np.broadcast_to(np.asarray(delta, dtype=np.float64), mo.shape)
+    w = be.read_weight(f"{PRE}layers.{layer}.post_feedforward_layernorm.weight").astype(np.float64)
+    names = set(be.weight_names())
+    sk = f"{PRE}layers.{layer}.layer_scalar"
+    s = float(np.asarray(be.read_weight(sk)).reshape(-1)[0]) if sk in names else 1.0
+    eps = be.spec.rms_eps
+    R = np.zeros_like(mo)
+    for i, (m, d) in enumerate(zip(mo, dl)):
+        rms = np.sqrt(np.mean(m ** 2) + eps)
+        R[i] = rms * post_norm_reach(m / rms, s * w, d) - m
+    return R
 
 
 def cv_gate(acts: np.ndarray, target: np.ndarray, weights: np.ndarray | None = None,

@@ -98,6 +98,10 @@ The raw outputs of these runs stay with the study; they contain competition task
 - MPS (torch on Apple GPUs): tested on CPU only.
 - Generation with an edit applied on the torch backend (MLX: see the worked example in `docs/recipes/`, run on E4B).
 - `evaluate.side_effects`, `construct.kv_update` / `second_moment` and the probe helpers: tested on tiny models only,
-  except where a worked example says otherwise.
+  except where a worked example says otherwise. Since 0.2.2-0.2.3: `kv_update`, `second_moment` and the
+  `residual_write_value` solve built one edit on E4B layer 30 (the solve then lived in the experiment's script; the
+  library function returns identical values on E4B captures at layers 30 and 38). Its write reached cosine 0.96-0.99
+  with the intended residual change at layers 30-38 (0.90-0.96 at twice the size; dividing by `w_post` had given 0.11
+  at layer 35). It was judged once on held-out cases: target passed, keep failed.
 - PEFT export loaded into vLLM: tested with PEFT merge on the tiny HF model only (the study served its exported
   adapters with vLLM on Kaggle, through the same `export_peft`).

@@ -92,11 +92,17 @@ closed form): give it the activations at the rows where the edit must act (`K`, 
 should add there (`R`, e.g. `alpha * d` for each row), plus the second moment `C` of activations on ordinary text
 (thousands of positions, e.g. `reference_texts("fit")` and your keep prompts). It hits those rows and stays small in
 the directions ordinary text uses, with no gate to tune; `lam` trades the two. Try it when a gate leaks.
+For a layer before the last, where the edit must move the *residual* by a vector `delta` (e.g. a difference of
+means at that layer), get the values with `construct.residual_write_value(be, L, mlp_out, delta)` from the captured
+`mlp_out` at the key rows (zero values for rows that must not move). It solves the write through the post-norm and
+the layer scalar. Dividing by `w_post` instead puts most of the write in its tiny dimensions, where the norm cancels
+it. Measure the realised residual change under `backend.edits(...)` after building.
 
 **Residual directions for any layer** (`construct.residual_write_direction`): turn a residual-stream direction (a
 `layer_sweep` difference of means, a steering vector) into the module-output direction that writes it through Gemma
 4's post-norm, then use it as the direction of a gate + direction edit (`gate_direction_edit(..., proj=...)`) or
-of an ablation. For behaviours with no single decision token (style, format, tone).
+of an ablation. For behaviours with no single decision token (style, format, tone). For a
+kv update toward a residual change, use `residual_write_value` (above) instead.
 
 **Unit patching** (`construct.quiet_units`, `mlp_input`, `unit_patch`): pick k low-use MLP units of a late layer and
 rewrite them: gate row = a read-out of the condition (over `mlp_input` = the pre-FFN-normed residual), up row = a

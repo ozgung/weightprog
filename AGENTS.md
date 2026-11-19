@@ -31,7 +31,8 @@ serve the edited model with standard tooling.
    - *gate + direction* on a late layer's `mlp.down_proj` (fires where the behaviour is about to happen, pushes the
      logits the right way); choose the ridge `lam` with `cv_gate`, passing `groups=` for paired prompts and repeated contexts;
    - *covariance-whitened key -> value update* (`second_moment` + `kv_update`, the ROME/MEMIT closed form): hits the
-     rows you give it and is quiet, by construction, in the directions ordinary text uses;
+     rows you give it and is quiet, by construction, in the directions ordinary text uses; at a middle layer, get its
+     values with `residual_write_value` (a wanted residual change written through the post-norm);
    - *residual direction* writes for a middle layer (`residual_write_direction`, for style or format behaviours with
      no single decision token), or *direction ablation* (`ablate_output`) to remove a feature;
    - *unit patching* (`quiet_units` + `unit_patch`): rewire a few low-use MLP units into a detector (gate row) that
@@ -56,7 +57,7 @@ from weightprog.evaluate import open_model, run, reuse_rows, side_effects, compa
 from weightprog.target import load_cases, select
 from weightprog.probe import divergence, decision_from_text, margins, collect_tail, layer_sweep, patch_sweep, measure_logit_shift, readout, show_tokens
 from weightprog.construct import LogitPath, TailState, fit_gate, cv_gate, logit_direction, gate_direction_edit, predict_logit_shift, unit_gain
-from weightprog.construct import second_moment, kv_update, residual_write_direction, ablate_output
+from weightprog.construct import second_moment, kv_update, residual_write_direction, residual_write_value, ablate_output
 from weightprog.construct import quiet_units, mlp_input, unit_patch, null_space_basis, project_edit
 from weightprog.edits import EditSet, ModuleEdit, realised_fraction
 from weightprog.controls import matched_control

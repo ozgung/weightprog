@@ -1,21 +1,33 @@
 cff-version: 1.2.0
-message: "If you use weightprog, please cite the writeup that describes it (preferred-citation below)."
+message: "If you use weightprog, please cite it as below, with the version you used. The Kaggle writeups (12 November 2026) describe version 0.2.1."
 type: software
-title: "weightprog"
-version: "0.2.2"
+title: "weightprog: closed-form weight editing for Gemma 4, with matched-control evaluation"
+version: "0.2.3"
+date-released: "2026-11-19"
 license: Apache-2.0
 authors:
   - family-names: "Genc"
     given-names: "Ozgun"
 repository-code: "https://github.com/ozgung/weightprog"
-preferred-citation:
-  type: generic
-  title: "Tools and Held-Out Tasks for Testing Agent-Written Weight Edits on Gemma 4"
-  authors:
-    - family-names: "Genc"
-      given-names: "Ozgun"
-  year: 2026
-  publisher:
-    name: "Kaggle"
-  notes: "Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track). weightprog: closed-form editing with matched-control checks; 186 offline held-out agent tasks and a 320-call replay set"
-  url: "https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/tools-held-out-tasks-agent-written-weight-edits"
+url: "https://github.com/ozgung/weightprog"
+references:
+  - type: generic
+    title: "Tools and Held-Out Tasks for Testing Agent-Written Weight Edits on Gemma 4"
+    authors:
+      - family-names: "Genc"
+        given-names: "Ozgun"
+    year: 2026
+    publisher:
+      name: "Kaggle"
+    notes: "Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track): the library's design, method coverage and validation (version 0.2.1)"
+    url: "https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/tools-held-out-tasks-agent-written-weight-edits"
+  - type: generic
+    title: "Frontier Models as Weight Editors for Gemma 4 E4B"
+    authors:
+      - family-names: "Genc"
+        given-names: "Ozgun"
+    year: 2026
+    publisher:
+      name: "Kaggle"
+    notes: "Kaggle Writeup, Gemma 4 Developer Agent Competition (paper track): the study the library came from"
+    url: "https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/frontier-models-as-weight-editors-for-gemma-4-e4b"
