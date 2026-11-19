@@ -70,6 +70,11 @@ print("\n".join(compare(rows, arm="edit", controls=["rand1"])["summary"]))   # o
 On a real model the same steps run on your own cases; `docs/recipes/context-token-choice.md` is a complete worked
 version and `examples/spelling/cases.jsonl` its case file (the case format only: on E4B those prompts never elicit the word, see the example's README).
 
+**On the real model, in a browser:** the Kaggle notebook
+[What a weight edit does in Gemma 4 E4B](https://www.kaggle.com/code/ozgung/what-a-weight-edit-does-in-gemma-4-e4b)
+(L4 GPU, weightprog v0.2.1) loads E4B, shows token by token what one of the study's frozen edits reads and writes,
+checks the exact prediction against two forward passes, and builds and exports a closed-form edit of its own.
+
 ## Command line
 
 ```bash
