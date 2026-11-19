@@ -6,6 +6,30 @@ log-probabilities, generate), closed-form edit constructors, and an evaluation t
 edit worked. Initial target model: **Gemma 4 E4B** (instruction-tuned, 42 layers). Read this file fully, then
 `skills/weight-editing/SKILL.md` (the workflow), then the recipe closest to your task in `docs/recipes/`.
 
+## Starting with a user
+
+Users often start from a one-line request. Before you write any code, make sure you know the four things below. Ask
+only for what the user has not already told you (or what your task does not already fix), a few short questions at a
+time, and confirm your understanding in one paragraph. If you are running without a user to ask, write your
+assumptions down and go on:
+
+1. **The behaviour to change:** one or two example prompts, what the model writes now, and what it should write.
+2. **What must stay the same:** nearby cases where the current behaviour is right (look-alikes become keep cases).
+3. **The model:** the E4B checkpoint directory (`config.json`, `model.safetensors`, `tokenizer.json`; about 16 GB in
+   bfloat16) and the machine (see Compute). If there is none yet, say what to download and how large it is, and wait.
+   If the user names a model other than a dense Gemma 4, say so plainly before going on: only Gemma 4 is supported
+   and only E4B is checked on the real model. Explain what another model needs (README, "Other models"): a backend,
+   a name mapping and adapted constructors, checked against the native forward pass. Agree with the user whether to
+   do that work or use Gemma 4.
+4. **Limits:** how much time to spend, and whether an exported LoRA adapter is wanted at the end.
+
+Then install (`pip install -e ".[mlx]"` on Apple silicon, `".[torch]"` otherwise), check the setup on the tiny model
+(`weightprog tiny /tmp/tiny`), and follow the loop below. Check in with the user at four points: the cases (show a
+few target and keep cases before the census), the census (does the behaviour actually occur?), the tune verdict, and
+before the single holdout run. At the end, report the edit (layers, modules, rank), the tune and holdout verdicts
+with their figures, every keep case that broke, and what you would try next. A failed edit, reported plainly, is a
+useful result.
+
 ## What an edit is
 
 An edit is a set of low-rank additions to decoder-layer linear weights: `W' = W + B @ A` per module (q/k/v/o/gate/up/
