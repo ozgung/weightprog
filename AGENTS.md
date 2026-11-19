@@ -18,7 +18,7 @@ assumptions down and go on:
 3. **The model:** the E4B checkpoint directory (`config.json`, `model.safetensors`, `tokenizer.json`; about 16 GB in
    bfloat16) and the machine (see Compute). If there is none yet, say what to download and how large it is, and wait.
    If the user names a model other than a dense Gemma 4, say so plainly before going on: only Gemma 4 is supported
-   and only E4B is checked on the real model. Explain what another model needs (README, "Other models"): a backend,
+   and only E4B is checked on the real model. Explain what another model needs ([docs/other-models.md](docs/other-models.md)): a backend,
    a name mapping and adapted constructors, checked against the native forward pass. Agree with the user whether to
    do that work or use Gemma 4.
 4. **Limits:** how much time to spend, and whether an exported LoRA adapter is wanted at the end.
